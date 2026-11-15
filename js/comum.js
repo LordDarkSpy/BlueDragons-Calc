@@ -30,11 +30,11 @@
       return msg;
     },
 
-    // Login com o Discord: sai do site e volta para a mesma página já logado.
+    // Login com o Discord: sai do site e volta sempre para a calculadora (a home), já logado.
     async entrarComDiscord() {
       const { error } = await BD.db.auth.signInWithOAuth({
         provider: 'discord',
-        options: { redirectTo: location.origin + location.pathname },
+        options: { redirectTo: new URL('./', location.href).href },
       });
       if (error) throw error;
     },
