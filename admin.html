@@ -53,7 +53,7 @@
       <button type="button" role="tab" data-aba="parcerias" aria-selected="false">🤝 Parcerias</button>
       <button type="button" role="tab" data-aba="produtos" aria-selected="false">📦 Produtos</button>
       <button type="button" role="tab" data-aba="config" aria-selected="false" hidden>🔔 Discord</button>
-      <button type="button" role="tab" data-aba="permissoes" aria-selected="false" hidden>🔐 Permissões</button>
+      <button type="button" role="tab" data-aba="gestao" aria-selected="false" hidden>🛡️ Gestão</button>
     </nav>
 
     <!-- Relatório semanal -->
@@ -136,13 +136,19 @@
     </section>
 
     <!-- Configurações / Discord -->
-    <section id="aba-permissoes" class="painel" role="tabpanel" hidden>
+    <section id="aba-gestao" class="painel" role="tabpanel" hidden>
+      <div class="cartao">
+        <h2>🛡️ Acesso ao painel por cargo</h2>
+        <p class="dica">Quem tiver um dos cargos marcados (e estiver cadastrado e ativo em Vendedores) entra neste painel. Os cargos são conferidos a cada login e a cada 10 minutos.</p>
+        <div id="cfg-cargos" class="lista-cargos"><p class="carregando">Carregando…</p></div>
+        <button id="cfg-carregar-cargos" type="button" class="botao botao-pequeno">🔄 Carregar cargos do servidor</button>
+      </div>
       <div class="cartao">
         <h2>🔐 Permissões das ações de impacto</h2>
-        <p class="dica">Escolha quais cargos do servidor podem fazer cada ação. O líder (administrador manual) sempre pode tudo, e só ele altera esta tela e a aba Discord. Quem não tiver a permissão nem vê o botão.</p>
+        <p class="dica">Escolha quais cargos podem fazer cada ação. O líder (administrador manual) sempre pode tudo e é quem altera esta aba. Quem não tiver a permissão nem vê o botão.</p>
         <div id="permissoes-lista"><p class="carregando">Carregando…</p></div>
-        <button id="permissoes-salvar" type="button" class="botao-primario">💾 Salvar permissões</button>
       </div>
+      <button id="permissoes-salvar" type="button" class="botao-primario">💾 Salvar gestão</button>
     </section>
 
     <section id="aba-config" class="painel" role="tabpanel" hidden>
@@ -174,10 +180,6 @@
         </div>
         <p id="cfg-bot-status" class="dica"></p>
 
-        <h2 style="margin-top:22px">Acesso ao painel por cargo</h2>
-        <p class="dica">Quem tiver um dos cargos marcados (e estiver cadastrado e ativo em Vendedores) acessa este painel. Os cargos são conferidos a cada login e a cada 10 minutos. Clique em <strong>Salvar configurações</strong> depois de marcar.</p>
-        <div id="cfg-cargos" class="lista-cargos"><p class="carregando">Carregando…</p></div>
-        <button id="cfg-carregar-cargos" type="button" class="botao botao-pequeno">🔄 Carregar cargos do servidor</button>
 
         <div class="grade-form">
           <div><label class="rotulo" for="cfg-nome">Nome da organização</label><input id="cfg-nome" type="text" maxlength="40"></div>
@@ -304,6 +306,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=6"></script>
-<script src="js/admin.js?v=10"></script>
+<script src="js/admin.js?v=11"></script>
 </body>
 </html>

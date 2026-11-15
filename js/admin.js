@@ -89,12 +89,13 @@
     parcerias: carregarParcerias,
     produtos: carregarProdutos,
     config: carregarConfig,
-    permissoes: carregarPermissoes,
+    gestao: carregarGestao,
   };
-  const SO_LIDER = ['config', 'permissoes'];
+  const SO_LIDER = ['gestao'];  // líder (e DEV)
+  const SO_DEV = ['config'];    // Discord e opções gerais: só o DEV (definido no banco)
 
   function abrirAba(nome) {
-    if (SO_LIDER.includes(nome) && !meuPerfil.lider) nome = 'relatorio';
+    if ((SO_LIDER.includes(nome) && !meuPerfil.lider) || (SO_DEV.includes(nome) && !meuPerfil.dev)) nome = 'relatorio';
     document.querySelectorAll('[data-aba]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.aba === nome)));
     Object.keys(carregadores).forEach((aba) => { $(`aba-${aba}`).hidden = aba !== nome; });
     BD.salvar('bluedragons-aba', nome);
@@ -109,6 +110,7 @@
     painelIniciado = true;
     // Mostra só o que a pessoa pode usar.
     SO_LIDER.forEach((aba) => { document.querySelector(`[data-aba="${aba}"]`).hidden = !meuPerfil.lider; });
+    SO_DEV.forEach((aba) => { document.querySelector(`[data-aba="${aba}"]`).hidden = !meuPerfil.dev; });
     document.querySelector('[data-novo="vendedor"]').hidden = !pode('gerenciar_vendedores');
     document.querySelector('[data-novo="produto"]').hidden = !pode('gerenciar_produtos');
     await Promise.all([carregarListasBase(), carregarConfig()]);
@@ -558,7 +560,7 @@
         dica: "É com ele que a pessoa entra no site. No Discord: Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no nome → Copiar ID do usuário." },
       { nome: "ativo", rotulo: "Ativo (pode entrar e registrar vendas)", tipo: "checkbox", valor: v.ativo },
       ...(meuPerfil.lider ? [{ nome: "admin", rotulo: "Administrador manual / líder (acessa tudo e gerencia permissões)", tipo: "checkbox", valor: v.admin,
-        dica: "Quem tem um dos cargos escolhidos na aba Discord já acessa o painel sem marcar esta opção." }] : []),
+        dica: "Quem tem um dos cargos escolhidos na aba Gestão já acessa o painel sem marcar esta opção." }] : []),
     ], async (val) => {
       if (!meuPerfil.lider) val.admin = !!v.admin; // só o líder mexe nisso
       if (val.nome.length < 2) throw new Error("O nome precisa ter pelo menos 2 letras.");
@@ -1201,14 +1203,15 @@
 
   let permissoesAtuais = {};
 
-  async function carregarPermissoes() {
+  async function carregarGestao() {
+    renderizarCargos();
     const el = $('permissoes-lista');
     el.innerHTML = '<p class="carregando">Carregando…</p>';
     const [, cfg] = await Promise.all([carregarCargos(), db.from('configuracoes').select('permissoes').eq('id', 1).single()]);
     if (cfg.error) { el.innerHTML = `<p class="status erro">${esc(BD.mensagemErro(cfg.error))}</p>`; return; }
     permissoesAtuais = cfg.data.permissoes || {};
     if (!cargosServidor.length) {
-      el.innerHTML = '<p class="dica">Nenhum cargo carregado ainda. Na aba Discord, salve o token do bot e clique em "Carregar cargos do servidor".</p>';
+      el.innerHTML = '<p class="dica">Nenhum cargo carregado ainda. Clique em "Carregar cargos do servidor" acima (o token do bot é configurado pelo DEV na aba Discord).</p>';
       return;
     }
     el.innerHTML = PERMISSOES.map((perm) => `
@@ -1231,9 +1234,14 @@
     });
     const botao = $('permissoes-salvar');
     botao.disabled = true;
-    const { error } = await db.from('configuracoes').update({ permissoes: novas, atualizado_em: new Date().toISOString() }).eq('id', 1);
+    const { error } = await db.from('configuracoes').update({
+      permissoes: novas,
+      cargos_admin: [...document.querySelectorAll('#cfg-cargos input:checked')].map((i) => i.value),
+      atualizado_em: new Date().toISOString(),
+    }).eq('id', 1);
     botao.disabled = false;
-    BD.toast(error ? BD.mensagemErro(error) : 'Permissões salvas.', error ? 'erro' : 'ok');
+    BD.toast(error ? BD.mensagemErro(error) : 'Gestão salva.', error ? 'erro' : 'ok');
+    if (!error) carregarCargos();
   });
 
   async function carregarConfig() {
@@ -1247,8 +1255,7 @@
     $('cfg-moeda').value = data.moeda;
     $('cfg-comissao').value = Math.round(Number(data.percentual_comissao) * 1000) / 10;
     $('cfg-servidor').value = data.discord_servidor_id || '';
-    atualizarStatusBot();
-    renderizarCargos();
+    if (meuPerfil.dev) atualizarStatusBot();
     BD.moeda = data.moeda || BD.moeda;
   }
 
@@ -1268,7 +1275,6 @@
     const { error } = await db.from('configuracoes').update({
       percentual_comissao: pct / 100,
       discord_servidor_id: servidor || null,
-      cargos_admin: [...document.querySelectorAll('#cfg-cargos input:checked')].map((i) => i.value),
       webhook_vendas: vendas || null,
       webhook_relatorios: relatorios || null,
       notificar_vendas: $('cfg-notificar').checked,
@@ -1298,7 +1304,7 @@
 
   $('cfg-carregar-cargos').addEventListener('click', async () => {
     await sincronizarNomes(null, false);
-    renderizarCargos();
+    carregarGestao();
   });
 
   async function atualizarStatusBot() {

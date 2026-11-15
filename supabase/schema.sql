@@ -171,6 +171,16 @@ create table if not exists public.discord_cargos (
   atualizado_em timestamptz not null default now()
 );
 
+-- DEV: administrador do site (Discord e opções gerais). Só é definido direto no banco
+-- (SQL Editor do Supabase); o site não consegue ler nem alterar esta tabela:
+--   insert into public.devs (discord_id) values ('<ID do Discord>');
+create table if not exists public.devs (
+  discord_id text primary key check (discord_id ~ '^\d{17,20}$'),
+  criado_em timestamptz not null default now()
+);
+alter table public.devs enable row level security;
+revoke all on public.devs from anon, authenticated;
+
 -- Cadastro completo das parcerias.
 -- produtos: o que a organização parceira vende (texto, com a grafia padronizada entre as parcerias).
 -- A primeira versão guardava produtos do nosso catálogo (uuid[]); troca pelo formato novo.
@@ -290,6 +300,7 @@ set search_path = public
 as $$
   -- Admin: marcado no cadastro OU com um dos cargos do servidor escolhidos no painel.
   select exists (select 1 from public.admins where user_id = auth.uid())
+      or exists (select 1 from public.devs where discord_id = public._discord_id())
       or exists (
         select 1 from public.vendedores v, public.configuracoes c
         where c.id = 1 and v.ativo and v.discord_id = public._discord_id()
@@ -297,13 +308,22 @@ as $$
       );
 $$;
 
--- Líder: administrador manual (marcado no cadastro) ou da tabela admins. Tem todas as permissões.
+create or replace function public._e_dev()
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$
+  select exists (select 1 from public.devs where discord_id = public._discord_id());
+$$;
+
+-- Líder: administrador manual (marcado no cadastro), da tabela admins ou DEV. Tem todas as permissões.
 create or replace function public._e_lider()
 returns boolean
 language sql stable security definer
 set search_path = public
 as $$
-  select exists (select 1 from public.admins where user_id = auth.uid())
+  select public._e_dev()
+      or exists (select 1 from public.admins where user_id = auth.uid())
       or exists (select 1 from public.vendedores v where v.ativo and v.admin and v.discord_id = public._discord_id());
 $$;
 
@@ -427,6 +447,29 @@ drop policy if exists configuracoes_lider on public.configuracoes;
 create policy configuracoes_lider on public.configuracoes for update to authenticated
   using (public._e_lider()) with check (public._e_lider());
 
+create or replace function public._configuracoes_antes()
+returns trigger
+language plpgsql security definer
+set search_path = public
+as $$
+begin
+  -- Pelo site (usuário logado): fora a gestão (permissões e cargos de acesso), tudo é do DEV. (Jobs do banco não têm usuário.)
+  if auth.uid() is not null and not public._e_dev()
+     and (to_jsonb(new) - 'permissoes' - 'cargos_admin' - 'atualizado_em') is distinct from (to_jsonb(old) - 'permissoes' - 'cargos_admin' - 'atualizado_em') then
+    raise exception 'Só o DEV pode alterar as configurações do Discord e do site.';
+  end if;
+  -- Gestão (líder): permissões e cargos que acessam o painel.
+  if auth.uid() is not null and (new.permissoes is distinct from old.permissoes or new.cargos_admin is distinct from old.cargos_admin)
+     and not public._e_lider() then
+    raise exception 'Só o líder pode alterar a gestão de acessos e permissões.';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists configuracoes_antes on public.configuracoes;
+create trigger configuracoes_antes before update on public.configuracoes
+  for each row execute function public._configuracoes_antes();
+
 -- Admins: cada um enxerga a própria linha (o site usa isso para saber se é admin).
 grant select on public.admins to authenticated;
 drop policy if exists admins_proprio on public.admins;
@@ -485,6 +528,7 @@ as $$
     'admin', public.is_admin(),
     'admin_manual', coalesce(v.admin, false),
     'lider', public._e_lider(),
+    'dev', public._e_dev(),
     'permissoes', (select coalesce(jsonb_object_agg(p, public.tem_permissao(p)), '{}'::jsonb) from unnest(public._permissoes_validas()) p)
   )
   from (select (public._vendedor_atual()).*) v;
@@ -1157,8 +1201,8 @@ language plpgsql volatile security definer
 set search_path = public
 as $$
 begin
-  if not public._e_lider() then
-    raise exception 'Só o líder pode configurar o Discord.';
+  if not public._e_dev() then
+    raise exception 'Só o DEV pode configurar o Discord.';
   end if;
   if p_url !~ '^https://(canary\.|ptb\.)?(discord|discordapp)\.com/api/webhooks/' then
     raise exception 'URL de webhook do Discord inválida.';
@@ -1294,8 +1338,8 @@ declare
   v_token text := trim(coalesce(p_token, ''));
   v_id uuid;
 begin
-  if not public._e_lider() then
-    raise exception 'Só o líder pode configurar o Discord.';
+  if not public._e_dev() then
+    raise exception 'Só o DEV pode configurar o Discord.';
   end if;
   v_token := regexp_replace(v_token, '^Bot\s+', '', 'i');
   if v_token !~ '^[A-Za-z0-9_.\-]{50,100}$' then
