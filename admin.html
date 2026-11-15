@@ -138,6 +138,14 @@
     <!-- Configurações / Discord -->
     <section id="aba-gestao" class="painel" role="tabpanel" hidden>
       <div class="cartao">
+        <h2>🏢 Organização</h2>
+        <div class="grade-form">
+          <div><label class="rotulo" for="cfg-nome">Nome da organização</label><input id="cfg-nome" type="text" maxlength="40"></div>
+          <div><label class="rotulo" for="cfg-moeda">Símbolo da moeda</label><input id="cfg-moeda" type="text" maxlength="5"></div>
+          <div><label class="rotulo" for="cfg-comissao">Comissão do vendedor (%)</label><input id="cfg-comissao" type="number" min="0" max="100" step="0.5"><p class="dica">Calculada sobre quantidade × preço de parceria, como na planilha. Vale para as próximas vendas.</p></div>
+        </div>
+      </div>
+      <div class="cartao">
         <h2>🛡️ Acesso ao painel por cargo</h2>
         <p class="dica">Quem tiver um dos cargos marcados (e estiver cadastrado e ativo em Vendedores) entra neste painel. Os cargos são conferidos a cada login e a cada 10 minutos.</p>
         <div id="cfg-cargos" class="lista-cargos"><p class="carregando">Carregando…</p></div>
@@ -180,12 +188,6 @@
         </div>
         <p id="cfg-bot-status" class="dica"></p>
 
-
-        <div class="grade-form">
-          <div><label class="rotulo" for="cfg-nome">Nome da organização</label><input id="cfg-nome" type="text" maxlength="40"></div>
-          <div><label class="rotulo" for="cfg-moeda">Símbolo da moeda</label><input id="cfg-moeda" type="text" maxlength="5"></div>
-          <div><label class="rotulo" for="cfg-comissao">Comissão do vendedor (%)</label><input id="cfg-comissao" type="number" min="0" max="100" step="0.5"><p class="dica">Calculada sobre quantidade × preço de parceria, como na planilha. Vale para as próximas vendas.</p></div>
-        </div>
         <button id="cfg-salvar" type="submit" class="botao-primario botao-bloco">💾 Salvar configurações</button>
       </form>
     </section>
@@ -306,6 +308,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=6"></script>
-<script src="js/admin.js?v=11"></script>
+<script src="js/admin.js?v=12"></script>
 </body>
 </html>

@@ -1228,6 +1228,8 @@
   }
 
   $('permissoes-salvar').addEventListener('click', async () => {
+    const pct = Number($('cfg-comissao').value);
+    if (!(pct >= 0 && pct <= 100)) return BD.toast('A comissão deve ficar entre 0 e 100%.', 'erro');
     const novas = {};
     document.querySelectorAll('#permissoes-lista [data-permissao]').forEach((f) => {
       novas[f.dataset.permissao] = [...f.querySelectorAll('input:checked')].map((i) => i.value);
@@ -1237,10 +1239,14 @@
     const { error } = await db.from('configuracoes').update({
       permissoes: novas,
       cargos_admin: [...document.querySelectorAll('#cfg-cargos input:checked')].map((i) => i.value),
+      nome_organizacao: $('cfg-nome').value.trim() || 'Blue Dragons',
+      moeda: $('cfg-moeda').value || 'R$ ',
+      percentual_comissao: pct / 100,
       atualizado_em: new Date().toISOString(),
     }).eq('id', 1);
     botao.disabled = false;
     BD.toast(error ? BD.mensagemErro(error) : 'Gestão salva.', error ? 'erro' : 'ok');
+    if (!error) BD.moeda = $('cfg-moeda').value || 'R$ ';
     if (!error) carregarCargos();
   });
 
@@ -1268,24 +1274,18 @@
     }
     const servidor = $('cfg-servidor').value.trim();
     if (servidor && !/^\d{17,20}$/.test(servidor)) return BD.toast('ID do servidor inválido: deve ter de 17 a 20 números.', 'erro');
-    const pct = Number($('cfg-comissao').value);
-    if (!(pct >= 0 && pct <= 100)) return BD.toast('A comissão deve ficar entre 0 e 100%.', 'erro');
     const botao = $('cfg-salvar');
     botao.disabled = true;
     const { error } = await db.from('configuracoes').update({
-      percentual_comissao: pct / 100,
       discord_servidor_id: servidor || null,
       webhook_vendas: vendas || null,
       webhook_relatorios: relatorios || null,
       notificar_vendas: $('cfg-notificar').checked,
       relatorio_automatico: $('cfg-automatico').checked,
-      nome_organizacao: $('cfg-nome').value.trim() || 'Blue Dragons',
-      moeda: $('cfg-moeda').value || 'R$ ',
       atualizado_em: new Date().toISOString(),
     }).eq('id', 1);
     botao.disabled = false;
     BD.toast(error ? BD.mensagemErro(error) : 'Configurações salvas.', error ? 'erro' : 'ok');
-    if (!error) BD.moeda = $('cfg-moeda').value || 'R$ ';
   });
 
   async function renderizarCargos() {

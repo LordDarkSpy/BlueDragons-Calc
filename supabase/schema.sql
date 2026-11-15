@@ -453,13 +453,16 @@ language plpgsql security definer
 set search_path = public
 as $$
 begin
-  -- Pelo site (usuário logado): fora a gestão (permissões e cargos de acesso), tudo é do DEV. (Jobs do banco não têm usuário.)
+  -- Pelo site (usuário logado): fora a gestão (permissões, cargos de acesso, nome, moeda e comissão), tudo é do DEV. (Jobs do banco não têm usuário.)
   if auth.uid() is not null and not public._e_dev()
-     and (to_jsonb(new) - 'permissoes' - 'cargos_admin' - 'atualizado_em') is distinct from (to_jsonb(old) - 'permissoes' - 'cargos_admin' - 'atualizado_em') then
+     and (to_jsonb(new) - 'permissoes' - 'cargos_admin' - 'nome_organizacao' - 'moeda' - 'percentual_comissao' - 'atualizado_em')
+       is distinct from (to_jsonb(old) - 'permissoes' - 'cargos_admin' - 'nome_organizacao' - 'moeda' - 'percentual_comissao' - 'atualizado_em') then
     raise exception 'Só o DEV pode alterar as configurações do Discord e do site.';
   end if;
-  -- Gestão (líder): permissões e cargos que acessam o painel.
-  if auth.uid() is not null and (new.permissoes is distinct from old.permissoes or new.cargos_admin is distinct from old.cargos_admin)
+  -- Gestão (líder): permissões, cargos que acessam o painel, nome da organização, moeda e comissão.
+  if auth.uid() is not null and (new.permissoes is distinct from old.permissoes or new.cargos_admin is distinct from old.cargos_admin
+       or new.nome_organizacao is distinct from old.nome_organizacao or new.moeda is distinct from old.moeda
+       or new.percentual_comissao is distinct from old.percentual_comissao)
      and not public._e_lider() then
     raise exception 'Só o líder pode alterar a gestão de acessos e permissões.';
   end if;
