@@ -938,3 +938,44 @@ body::before {
 .visualizador { margin: 0; max-width: min(1100px, 100%); text-align: center; }
 .visualizador figcaption { color: var(--texto); font-weight: 600; margin-bottom: 8px; }
 .visualizador img { max-width: 100%; max-height: calc(100vh - 140px); border-radius: 8px; display: block; margin: 0 auto 10px; }
+
+/* Produtos da organização (tags com sugestões) e colar print */
+
+.editor-produtos { position: relative; margin-top: 6px; }
+.editor-produtos .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.editor-produtos .tags:empty { display: none; }
+.chip.tag { padding-right: 4px; background: rgba(30, 136, 255, 0.15); border-color: var(--azul); }
+.chip.tag button {
+  border: 0; background: transparent; color: var(--texto-suave); cursor: pointer;
+  font-size: 1rem; line-height: 1; padding: 0 4px; border-radius: 50%;
+}
+.chip.tag button:hover { color: var(--vermelho); }
+.entrada-produto { display: flex; gap: 8px; }
+.entrada-produto input { flex: 1; min-width: 0; }
+.sugestoes {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; padding: 8px;
+  border: 1px solid var(--borda); border-radius: 8px; background: var(--cartao-item);
+}
+.sugestao {
+  border: 1px solid var(--borda); background: var(--cartao); color: var(--texto);
+  padding: 4px 10px; border-radius: 999px; cursor: pointer; font-size: 0.82rem;
+}
+.sugestao:hover, .sugestao:focus-visible { border-color: var(--azul); }
+.sugestao.nova { border-style: dashed; color: var(--azul-claro); }
+
+.area-colar { cursor: pointer; text-align: center; padding: 6px; outline: none; }
+.area-colar .dica { line-height: 1.4; }
+.area-colar:focus-visible, .area-colar:focus { border-color: var(--ciano); border-style: solid; box-shadow: 0 0 0 2px rgba(47, 224, 255, 0.25); }
+.area-colar.arrastando { border-color: var(--verde); border-style: solid; background: rgba(46, 204, 113, 0.08); }
+.area-colar.nova { border-color: var(--verde); border-style: solid; }
+.area-colar img { pointer-events: none; }
+
+/* Permissões e situação da parceria (no Editar) */
+
+.parceria-situacao { margin: 16px 0 6px; padding-top: 14px; border-top: 1px solid var(--borda); }
+.parceria-situacao .dica { margin: 0 0 8px; }
+.permissao { border: 1px solid var(--borda); border-radius: 10px; padding: 10px 14px 4px; margin: 0 0 14px; }
+.permissao legend { padding: 0 6px; font-weight: 700; }
+.permissao .dica { margin: 0; }
+.motivo-cancelamento { margin-top: 4px; font-size: 0.78rem; color: var(--vermelho); }
+.itens-venda li { display: flex; align-items: center; gap: 5px; }

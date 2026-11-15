@@ -11,6 +11,16 @@
   let semanaInicio = BD.inicioSemana(new Date());
   let relatorioAtual = null;
   let meuDiscordId = null;
+  let meuPerfil = {};
+  // Ações de impacto: o líder pode tudo; os outros, só o que o líder liberou para o cargo.
+  const pode = (permissao) => !!(meuPerfil.lider || (meuPerfil.permissoes || {})[permissao]);
+  const PERMISSOES = [
+    { id: 'encerrar_parceria', nome: 'Encerrar / reativar parcerias', dica: 'Botão dentro de Editar parceria (exige motivo).' },
+    { id: 'registrar_pagamento', nome: 'Registrar pagamentos', dica: 'Botão "Pagar" no relatório semanal.' },
+    { id: 'cancelar_venda', nome: 'Cancelar / reativar vendas', dica: 'Aba Vendas.' },
+    { id: 'gerenciar_vendedores', nome: 'Cadastrar e editar vendedores', dica: 'Aba Vendedores (marcar administrador manual continua só com o líder).' },
+    { id: 'gerenciar_produtos', nome: 'Cadastrar e editar produtos e preços', dica: 'Aba Produtos.' },
+  ];
 
   // ================================================================ autenticação
 
@@ -38,6 +48,7 @@
     }
     $("usuario-admin").textContent = perfil.nome || perfil.apelido || session.user.email || "";
     meuDiscordId = perfil.discord_id;
+    meuPerfil = perfil;
     if (!perfil.admin) {
       $("sem-permissao-id").value = perfil.discord_id || "";
       $("sem-permissao").hidden = false;
@@ -78,9 +89,12 @@
     parcerias: carregarParcerias,
     produtos: carregarProdutos,
     config: carregarConfig,
+    permissoes: carregarPermissoes,
   };
+  const SO_LIDER = ['config', 'permissoes'];
 
   function abrirAba(nome) {
+    if (SO_LIDER.includes(nome) && !meuPerfil.lider) nome = 'relatorio';
     document.querySelectorAll('[data-aba]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.aba === nome)));
     Object.keys(carregadores).forEach((aba) => { $(`aba-${aba}`).hidden = aba !== nome; });
     BD.salvar('bluedragons-aba', nome);
@@ -93,6 +107,10 @@
   async function iniciarPainel() {
     if (painelIniciado) return;
     painelIniciado = true;
+    // Mostra só o que a pessoa pode usar.
+    SO_LIDER.forEach((aba) => { document.querySelector(`[data-aba="${aba}"]`).hidden = !meuPerfil.lider; });
+    document.querySelector('[data-novo="vendedor"]').hidden = !pode('gerenciar_vendedores');
+    document.querySelector('[data-novo="produto"]').hidden = !pode('gerenciar_produtos');
     await Promise.all([carregarListasBase(), carregarConfig()]);
     const salva = BD.lerSalvo('bluedragons-aba');
     abrirAba(carregadores[salva] ? salva : 'relatorio');
@@ -236,7 +254,7 @@
           <td class="num">${formatarValor(x.total)}</td>
           <td class="num"><strong>${formatarValor(x.comissao)}</strong></td>
           <td>${s.html}</td>
-          <td class="acao">${s.pendente > 0 && x.vendedor_id ? `<button type="button" class="botao-sucesso botao-pequeno" data-pagar="${i}">💸 Pagar</button>` : ''}</td>
+          <td class="acao">${s.pendente > 0 && x.vendedor_id && pode('registrar_pagamento') ? `<button type="button" class="botao-sucesso botao-pequeno" data-pagar="${i}">💸 Pagar</button>` : ''}</td>
         </tr>`;
       }).join('')}
       </tbody>
@@ -337,6 +355,13 @@
   ['vendas-de', 'vendas-ate', 'vendas-vendedor', 'vendas-parceria', 'vendas-canceladas']
     .forEach((id) => $(id).addEventListener('change', carregarVendas));
 
+  // Produto do catálogo para mostrar a imagem certa (pelo id; se foi apagado, pelo nome).
+  function produtoDoItem(i) {
+    return cache.produtos.find((p) => p.id === i.produto_id)
+      || cache.produtos.find((p) => p.nome === i.produto_nome)
+      || { icone: i.icone };
+  }
+
   async function carregarVendas() {
     const container = $('vendas-tabela');
     container.innerHTML = '<p class="carregando">Carregando…</p>';
@@ -344,7 +369,7 @@
     const ate = $('vendas-ate').value;
 
     let consulta = db.from('vendas')
-      .select('id, numero, criado_em, vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao, cancelada, venda_itens(produto_nome, icone, quantidade, preco_unitario, subtotal)')
+      .select('id, numero, criado_em, vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao, cancelada, cancelada_em, cancelada_motivo, cancelada_por, venda_itens(produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal)')
       .order('criado_em', { ascending: false })
       .limit(1000);
     if (de) consulta = consulta.gte('criado_em', new Date(`${de}T00:00:00`).toISOString());
@@ -376,11 +401,12 @@
           <td>${esc(v.vendedor_nome)}</td>
           <td>${esc(v.cliente || '—')}</td>
           <td>${v.com_parceria ? `<span class="etiqueta parceria">${esc(v.parceria_nome || 'Parceria')}</span>` : '<span class="etiqueta">Pista</span>'}</td>
-          <td><ul class="itens-venda">${v.venda_itens.map((i) => `<li>${esc(i.icone || '')} ${esc(i.produto_nome)} x${i.quantidade}</li>`).join('')}</ul>
+          <td><ul class="itens-venda">${v.venda_itens.map((i) => `<li>${BD.iconeProduto(produtoDoItem(i), 'chip-img')} ${esc(i.produto_nome)} x${i.quantidade}</li>`).join('')}</ul>
+            ${v.cancelada && v.cancelada_motivo ? `<div class="motivo-cancelamento">⛔ Cancelada${v.cancelada_por ? ' por ' + esc(v.cancelada_por) : ''}${v.cancelada_em ? ' em ' + esc(BD.dataHoraBR(v.cancelada_em)) : ''}: ${esc(v.cancelada_motivo)}</div>` : ''}
             ${v.observacao ? `<div class="dica">📝 ${esc(v.observacao)}</div>` : ''}</td>
           <td class="num"><strong>${formatarValor(v.total)}</strong></td>
           <td class="num">${formatarValor(v.comissao)}</td>
-          <td class="acoes">${v.cancelada
+          <td class="acoes">${!pode('cancelar_venda') ? '' : v.cancelada
             ? `<button type="button" class="botao botao-pequeno" data-reativar="${esc(v.id)}">Reativar</button>`
             : `<button type="button" class="botao-perigo botao-pequeno" data-cancelar="${esc(v.id)}">Cancelar</button>`}</td>
         </tr>`).join('')}
@@ -390,23 +416,52 @@
   $('vendas-tabela').addEventListener('click', async (e) => {
     const botao = e.target.closest('[data-cancelar], [data-reativar]');
     if (!botao) return;
-    const cancelar = !!botao.dataset.cancelar;
-    const id = botao.dataset.cancelar || botao.dataset.reativar;
-    if (cancelar && !confirm('Cancelar esta venda? Ela deixará de contar nos relatórios.')) return;
+    if (botao.dataset.cancelar) return abrirCancelarVenda(botao.dataset.cancelar);
     botao.disabled = true;
-    const { error } = await db.from('vendas')
-      .update({ cancelada: cancelar, cancelada_em: cancelar ? new Date().toISOString() : null })
-      .eq('id', id);
-    if (error) BD.toast(BD.mensagemErro(error), 'erro');
-    else BD.toast(cancelar ? 'Venda cancelada.' : 'Venda reativada.', 'ok');
+    const { error } = await db.rpc('reativar_venda', { p_id: botao.dataset.reativar });
+    BD.toast(error ? BD.mensagemErro(error) : 'Venda reativada.', error ? 'erro' : 'ok');
     carregarVendas();
   });
 
+  let vendaCancelando = null;
+  function abrirCancelarVenda(id) {
+    const v = cache.vendas.find((x) => x.id === id);
+    vendaCancelando = id;
+    $('cancelar-venda-info').textContent = v ? `Venda #${v.numero} · ${v.vendedor_nome} · ${formatarValor(v.total)}` : '';
+    $('cancelar-venda-motivo').value = '';
+    $('cancelar-venda-erro').hidden = true;
+    $('cancelar-venda-confirmar').disabled = false;
+    BD.abrirModal($('modal-cancelar-venda'), $('cancelar-venda-motivo'));
+  }
+  $('form-cancelar-venda').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const motivo = $('cancelar-venda-motivo').value.trim();
+    const erro = $('cancelar-venda-erro');
+    if (motivo.length < 3) {
+      erro.textContent = 'Informe a justificativa do cancelamento.';
+      erro.hidden = false;
+      $('cancelar-venda-motivo').focus();
+      return;
+    }
+    $('cancelar-venda-confirmar').disabled = true;
+    const { error } = await db.rpc('cancelar_venda', { p_id: vendaCancelando, p_motivo: motivo });
+    if (error) {
+      erro.textContent = BD.mensagemErro(error);
+      erro.hidden = false;
+      $('cancelar-venda-confirmar').disabled = false;
+      return;
+    }
+    BD.fecharModal($('modal-cancelar-venda'));
+    BD.toast('Venda cancelada.', 'ok');
+    carregarVendas();
+  });
+  $('cancelar-venda-voltar').addEventListener('click', () => BD.fecharModal($('modal-cancelar-venda')));
+
   $('vendas-csv').addEventListener('click', () => {
-    const linhas = [['Número', 'Data', 'Vendedor', 'Cliente', 'Parceria', 'Produto', 'Quantidade', 'Preço unitário', 'Subtotal', 'Total da venda', 'Comissão da venda', 'Observação', 'Cancelada']];
+    const linhas = [['Número', 'Data', 'Vendedor', 'Cliente', 'Parceria', 'Produto', 'Quantidade', 'Preço unitário', 'Subtotal', 'Total da venda', 'Comissão da venda', 'Observação', 'Cancelada', 'Justificativa do cancelamento']];
     cache.vendas.forEach((v) => v.venda_itens.forEach((i) => linhas.push([
       v.numero, BD.dataHoraBR(v.criado_em), v.vendedor_nome, v.cliente || '', v.com_parceria ? v.parceria_nome : 'Pista',
-      i.produto_nome, i.quantidade, i.preco_unitario, i.subtotal, v.total, v.comissao, v.observacao || '', v.cancelada ? 'Sim' : 'Não',
+      i.produto_nome, i.quantidade, i.preco_unitario, i.subtotal, v.total, v.comissao, v.observacao || '', v.cancelada ? 'Sim' : 'Não', v.cancelada_motivo || '',
     ])));
     baixarCSV(`vendas-${$('vendas-de').value || 'inicio'}-a-${$('vendas-ate').value || 'hoje'}.csv`, linhas);
   });
@@ -488,7 +543,7 @@
           <td><code>${esc(v.discord_id)}</code>${v.discord_id === meuDiscordId ? ' <span class="dica">(você)</span>' : ''}</td>
           <td>${acessoVendedor(v)}</td>
           <td>${etiquetaAtivo(v.ativo)}${v.no_servidor === false ? ' <span class="etiqueta inativo">Fora do servidor</span>' : ''}</td>
-          <td class="acoes"><button type="button" class="botao botao-pequeno" data-editar-vendedor="${esc(v.id)}">Editar</button></td>
+          <td class="acoes">${pode('gerenciar_vendedores') ? `<button type="button" class="botao botao-pequeno" data-editar-vendedor="${esc(v.id)}">Editar</button>` : ''}</td>
         </tr>`).join('')}
       </tbody></table>`;
   }
@@ -502,9 +557,10 @@
       { nome: "discord_id", rotulo: "ID do Discord", valor: v.discord_id, obrigatorio: true, max: 20, inputmode: "numeric", largo: true,
         dica: "É com ele que a pessoa entra no site. No Discord: Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no nome → Copiar ID do usuário." },
       { nome: "ativo", rotulo: "Ativo (pode entrar e registrar vendas)", tipo: "checkbox", valor: v.ativo },
-      { nome: "admin", rotulo: "Administrador manual (acessa o painel mesmo sem cargo)", tipo: "checkbox", valor: v.admin,
-        dica: "Quem tem um dos cargos escolhidos na aba Discord já acessa o painel sem marcar esta opção." },
+      ...(meuPerfil.lider ? [{ nome: "admin", rotulo: "Administrador manual / líder (acessa tudo e gerencia permissões)", tipo: "checkbox", valor: v.admin,
+        dica: "Quem tem um dos cargos escolhidos na aba Discord já acessa o painel sem marcar esta opção." }] : []),
     ], async (val) => {
+      if (!meuPerfil.lider) val.admin = !!v.admin; // só o líder mexe nisso
       if (val.nome.length < 2) throw new Error("O nome precisa ter pelo menos 2 letras.");
       if (!/^\d{17,20}$/.test(val.discord_id)) throw new Error("ID do Discord inválido: deve ter de 17 a 20 números.");
       const id = falhou(await db.rpc("salvar_vendedor", {
@@ -598,12 +654,16 @@
     return (c) => (c && urlsAssinadas[c] ? urlsAssinadas[c].url : '');
   }
 
-  function produtoPorId(id) { return cache.produtos.find((p) => p.id === id); }
+  function chipsProdutos(lista) {
+    if (!(lista || []).length) return '<span class="dica">—</span>';
+    return `<div class="chips">${lista.map((n) => `<span class="chip">${esc(n)}</span>`).join('')}</div>`;
+  }
 
-  function chipsProdutos(ids) {
-    const lista = (ids || []).map(produtoPorId).filter(Boolean);
-    if (!lista.length) return '<span class="dica">—</span>';
-    return `<div class="chips">${lista.map((p) => `<span class="chip">${BD.iconeProduto(p, 'chip-img')} ${esc(p.nome)}</span>`).join('')}</div>`;
+  // Todos os produtos já usados nas parcerias (grafia padrão), em ordem alfabética.
+  function produtosConhecidos() {
+    const mapa = new Map();
+    cache.parcerias.forEach((p) => (p.produtos || []).forEach((n) => { const k = semAcento(n); if (!mapa.has(k)) mapa.set(k, n); }));
+    return [...mapa.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }
 
   const semAcento = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -615,10 +675,9 @@
     return cache.parcerias.filter((p) => {
       if (status === 'ativa' && !p.ativo) return false;
       if (status === 'encerrada' && p.ativo) return false;
-      if (produto && !(p.produtos || []).includes(produto)) return false;
+      if (produto && !(p.produtos || []).some((n) => semAcento(n) === semAcento(produto))) return false;
       if (!busca) return true;
-      const nomesProdutos = (p.produtos || []).map((id) => (produtoPorId(id) || {}).nome).join(' ');
-      return semAcento(`${p.nome} ${p.responsavel || ''} ${p.feita_por_nome || ''} ${nomesProdutos}`).includes(busca);
+      return semAcento(`${p.nome} ${p.responsavel || ''} ${p.feita_por_nome || ''} ${(p.produtos || []).join(' ')}`).includes(busca);
     });
   }
 
@@ -630,8 +689,9 @@
     const filtroProduto = $('parcerias-produto');
     const escolhido = filtroProduto.value;
     filtroProduto.innerHTML = '<option value="">Todos os produtos</option>'
-      + cache.produtos.map((p) => `<option value="${esc(p.id)}">${esc(p.nome)}</option>`).join('');
+      + produtosConhecidos().map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
     filtroProduto.value = escolhido;
+    if (filtroProduto.value !== escolhido) filtroProduto.value = '';
     // Total vendido por parceria na semana atual.
     const ini = BD.inicioSemana(new Date());
     const { data: rel } = await db.rpc('relatorio_periodo', { p_inicio: BD.dataISO(ini), p_fim: BD.dataISO(BD.somarDias(ini, 6)) });
@@ -669,9 +729,6 @@
           <td class="acoes">
             <button type="button" class="botao-primario botao-pequeno" data-ver-parceria="${esc(p.id)}">👁️ Visualizar</button>
             <button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">Editar</button>
-            ${p.ativo
-              ? `<button type="button" class="botao-perigo botao-pequeno" data-encerrar-parceria="${esc(p.id)}">Encerrar</button>`
-              : `<button type="button" class="botao botao-pequeno" data-reativar-parceria="${esc(p.id)}">Reativar</button>`}
           </td>
         </tr>`;
       }).join('')}
@@ -689,9 +746,98 @@
     const info = IMAGENS_PARCERIA[campo];
     const atual = parceriaEditando && parceriaEditando[campo];
     el.innerHTML = `<span class="rotulo">${el.querySelector('.rotulo').innerHTML}</span>
-      <div class="previa-imagem">${atual && url(atual) ? `<img src="${esc(url(atual))}" alt="${esc(info.titulo)}">` : '<span class="dica">Sem imagem</span>'}</div>
+      <div class="previa-imagem area-colar" tabindex="0" role="button" data-colar="${campo}"
+           aria-label="${esc(info.titulo)}: clique aqui e cole um print com Ctrl+V, ou arraste uma imagem">
+        ${atual && url(atual) ? `<img src="${esc(url(atual))}" alt="${esc(info.titulo)}">` : '<span class="dica">📋 Clique aqui e cole o print (Ctrl+V)<br>ou arraste a imagem</span>'}
+      </div>
       <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-imagem="${campo}">
       ${atual ? `<label class="checkbox"><input type="checkbox" data-remover="${campo}"> Remover imagem</label>` : ''}`;
+  }
+
+  // Guarda a imagem escolhida (arquivo, print colado ou arrastado) e mostra a prévia.
+  function aplicarImagem(campo, f) {
+    if (!f) return;
+    if (!TIPOS_IMAGEM[f.type]) { BD.toast('Isso não é uma imagem PNG, JPG, WEBP ou GIF.', 'erro'); return; }
+    imagensEscolhidas[campo] = f;
+    const area = document.querySelector(`#form-parceria [data-colar="${campo}"]`);
+    try { area.innerHTML = `<img src="${URL.createObjectURL(f)}" alt="">`; } catch (e) { area.innerHTML = '<span class="dica">✅ Imagem pronta para salvar</span>'; }
+    area.classList.add('nova');
+    const remover = document.querySelector(`#form-parceria [data-remover="${campo}"]`);
+    if (remover) remover.checked = false;
+  }
+
+  function imagemDaAreaDeTransferencia(dados) {
+    const itens = [...((dados && dados.items) || [])];
+    const item = itens.find((i) => i.kind === 'file' && TIPOS_IMAGEM[i.type]);
+    if (item) return item.getAsFile();
+    return [...((dados && dados.files) || [])].find((f) => TIPOS_IMAGEM[f.type]) || null;
+  }
+
+  let ultimaAreaImagem = null;
+  $('form-parceria').addEventListener('focusin', (e) => {
+    const area = e.target.closest('[data-colar]');
+    if (area) ultimaAreaImagem = area.dataset.colar;
+  });
+  $('form-parceria').addEventListener('click', (e) => {
+    const area = e.target.closest('[data-colar]');
+    if (area) { area.focus(); ultimaAreaImagem = area.dataset.colar; }
+  });
+  // Colar (Ctrl+V): vai para o quadro selecionado; sem quadro selecionado, para o primeiro vazio.
+  document.addEventListener('paste', (e) => {
+    if ($('modal-parceria').hidden) return;
+    const f = imagemDaAreaDeTransferencia(e.clipboardData);
+    if (!f) return; // texto: deixa colar normalmente nos campos
+    e.preventDefault();
+    const alvo = document.activeElement && document.activeElement.closest && document.activeElement.closest('[data-colar]');
+    let campo = alvo ? alvo.dataset.colar : ultimaAreaImagem;
+    if (!campo) campo = Object.keys(IMAGENS_PARCERIA).find((c) => !imagensEscolhidas[c] && !(parceriaEditando && parceriaEditando[c])) || 'img_localizacao';
+    aplicarImagem(campo, f);
+    BD.toast(`Print colado em "${IMAGENS_PARCERIA[campo].titulo}".`, 'ok');
+  });
+  $('form-parceria').addEventListener('dragover', (e) => { if (e.target.closest('[data-colar]')) { e.preventDefault(); e.target.closest('[data-colar]').classList.add('arrastando'); } });
+  $('form-parceria').addEventListener('dragleave', (e) => { const a = e.target.closest('[data-colar]'); if (a) a.classList.remove('arrastando'); });
+  $('form-parceria').addEventListener('drop', (e) => {
+    const area = e.target.closest('[data-colar]');
+    if (!area) return;
+    e.preventDefault();
+    area.classList.remove('arrastando');
+    aplicarImagem(area.dataset.colar, imagemDaAreaDeTransferencia(e.dataTransfer));
+  });
+
+  // ---------------------------------------------------------------- produtos da organização (tags)
+
+  let produtosEscolhidos = [];
+
+  function desenharProdutos() {
+    const caixa = $('parceria-produtos');
+    caixa.querySelector('.tags').innerHTML = produtosEscolhidos.map((n, i) =>
+      `<span class="chip tag">${esc(n)} <button type="button" data-tirar-produto="${i}" aria-label="Remover ${esc(n)}">×</button></span>`).join('');
+  }
+
+  function sugestoesProduto() {
+    const entrada = $('parceria-produto-novo');
+    const termo = semAcento(entrada.value.trim());
+    const ja = new Set(produtosEscolhidos.map(semAcento));
+    const lista = produtosConhecidos().filter((n) => !ja.has(semAcento(n)) && (!termo || semAcento(n).includes(termo))).slice(0, 8);
+    const caixa = $('parceria-produto-sugestoes');
+    const existeIgual = produtosConhecidos().some((n) => semAcento(n) === termo);
+    caixa.innerHTML = lista.map((n) => `<button type="button" class="sugestao" data-sugestao="${esc(n)}">${esc(n)}</button>`).join('')
+      + (termo && !existeIgual ? `<button type="button" class="sugestao nova" data-sugestao="${esc(entrada.value.trim())}">+ Adicionar "${esc(entrada.value.trim())}" (novo)</button>` : '');
+    caixa.hidden = !caixa.innerHTML;
+  }
+
+  function adicionarProduto(texto) {
+    let n = String(texto || '').replace(/\s+/g, ' ').trim();
+    if (!n) return;
+    if (n.length > 40) { BD.toast('O nome do produto pode ter no máximo 40 caracteres.', 'erro'); return; }
+    // Se já existe em outra parceria, usa exatamente a mesma escrita.
+    const igual = produtosConhecidos().find((x) => semAcento(x) === semAcento(n));
+    if (igual) n = igual;
+    if (!produtosEscolhidos.some((x) => semAcento(x) === semAcento(n))) produtosEscolhidos.push(n);
+    $('parceria-produto-novo').value = '';
+    desenharProdutos();
+    sugestoesProduto();
+    $('parceria-produto-novo').focus();
   }
 
   async function editarParceria(p) {
@@ -706,24 +852,50 @@
     $('parceria-feita-por').innerHTML = '<option value="">—</option>'
       + cache.vendedores.map((v) => `<option value="${esc(v.id)}">${esc(nomeVendedor(v))}${v.ativo ? '' : ' (inativo)'}</option>`).join('');
     $('parceria-feita-por').value = p ? (p.feita_por_id || '') : meuId;
-    const marcados = new Set((p && p.produtos) || []);
-    $('parceria-produtos').innerHTML = cache.produtos.length
-      ? cache.produtos.map((pr) => `<label class="produto-escolha"><input type="checkbox" value="${esc(pr.id)}" ${marcados.has(pr.id) ? 'checked' : ''}> ${BD.iconeProduto(pr, 'chip-img')} ${esc(pr.nome)}</label>`).join('')
-      : '<span class="dica">Cadastre produtos na aba Produtos.</span>';
+    produtosEscolhidos = [...((p && p.produtos) || [])];
+    $('parceria-produtos').innerHTML = `<div class="tags"></div>
+      <div class="entrada-produto">
+        <input id="parceria-produto-novo" type="text" maxlength="40" autocomplete="off" placeholder="Digite o produto e aperte Enter">
+        <button type="button" class="botao botao-pequeno" id="parceria-produto-adicionar">Adicionar</button>
+      </div>
+      <div id="parceria-produto-sugestoes" class="sugestoes" hidden></div>`;
+    desenharProdutos();
+    ultimaAreaImagem = null;
     const url = await urlsImagens(p ? [p.img_localizacao, p.img_banner, p.img_cores] : []);
     document.querySelectorAll('#form-parceria .campo-imagem').forEach((el) => montarCampoImagem(el, el.dataset.campo, url));
+    // Encerrar / reativar: só ao editar e só para quem tem a permissão.
+    const situacao = $('parceria-situacao');
+    situacao.hidden = !(p && pode('encerrar_parceria'));
+    situacao.innerHTML = situacao.hidden ? '' : p.ativo
+      ? `<p class="dica">Encerrar tira a parceria da calculadora. O cadastro e o histórico ficam guardados.</p>
+         <button type="button" class="botao-perigo botao-bloco" data-encerrar-parceria="${esc(p.id)}">⛔ Encerrar parceria</button>`
+      : `<p class="perfil-encerrada">Encerrada em ${esc(p.encerrada_em ? BD.dataHoraBR(p.encerrada_em) : '—')}${p.encerrada_por ? ' por ' + esc(p.encerrada_por) : ''}.<br>Motivo: ${esc(p.encerrada_motivo || '—')}</p>
+         <button type="button" class="botao botao-bloco" data-reativar-parceria="${esc(p.id)}">✅ Reativar parceria</button>`;
     $('parceria-erro').hidden = true;
     $('parceria-salvar').disabled = false;
     BD.abrirModal($('modal-parceria'), $('parceria-nome'));
   }
 
+  $('parceria-produtos').addEventListener('input', (e) => { if (e.target.id === 'parceria-produto-novo') sugestoesProduto(); });
+  $('parceria-produtos').addEventListener('focusin', (e) => { if (e.target.id === 'parceria-produto-novo') sugestoesProduto(); });
+  $('parceria-produtos').addEventListener('keydown', (e) => {
+    if (e.target.id !== 'parceria-produto-novo') return;
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); adicionarProduto(e.target.value); }
+    if (e.key === 'Backspace' && !e.target.value && produtosEscolhidos.length) { produtosEscolhidos.pop(); desenharProdutos(); sugestoesProduto(); }
+  });
+  $('parceria-produtos').addEventListener('click', (e) => {
+    const sug = e.target.closest('[data-sugestao]');
+    if (sug) return adicionarProduto(sug.dataset.sugestao);
+    if (e.target.id === 'parceria-produto-adicionar') return adicionarProduto($('parceria-produto-novo').value);
+    const tirar = e.target.closest('[data-tirar-produto]');
+    if (tirar) { produtosEscolhidos.splice(Number(tirar.dataset.tirarProduto), 1); desenharProdutos(); sugestoesProduto(); }
+  });
+
   $('form-parceria').addEventListener('change', (e) => {
     const arquivo = e.target.closest('[data-imagem]');
     if (arquivo) {
       const f = arquivo.files[0];
-      if (f) imagensEscolhidas[arquivo.dataset.imagem] = f; else delete imagensEscolhidas[arquivo.dataset.imagem];
-      const previa = arquivo.parentElement.querySelector('.previa-imagem');
-      if (f && TIPOS_IMAGEM[f.type]) previa.innerHTML = `<img src="${URL.createObjectURL(f)}" alt="">`;
+      if (f) aplicarImagem(arquivo.dataset.imagem, f); else delete imagensEscolhidas[arquivo.dataset.imagem];
       return;
     }
     const remover = e.target.closest('[data-remover]');
@@ -753,7 +925,7 @@
         localizacao: $('parceria-localizacao').value.trim() || null,
         observacoes: $('parceria-observacoes').value.trim() || null,
         feita_por_id: $('parceria-feita-por').value || null,
-        produtos: [...document.querySelectorAll('#parceria-produtos input:checked')].map((c) => c.value),
+        produtos: (() => { const sobra = $('parceria-produto-novo').value.trim(); if (sobra) adicionarProduto(sobra); return produtosEscolhidos.slice(); })(),
       };
       let id = parceriaEditando && parceriaEditando.id;
       if (id) falhou(await db.from('parcerias').update(dados).eq('id', id));
@@ -822,6 +994,7 @@
       return;
     }
     BD.fecharModal($('modal-encerrar'));
+    BD.fecharModal($('modal-parceria'));
     BD.toast('Parceria encerrada.', 'ok');
     await carregarParcerias();
     if (!$('modal-perfil').hidden) verParceria(encerrando.id);
@@ -831,6 +1004,7 @@
 
   async function reativarParceria(p) {
     const { error } = await db.rpc('reativar_parceria', { p_id: p.id });
+    if (!error) BD.fecharModal($('modal-parceria'));
     BD.toast(error ? BD.mensagemErro(error) : 'Parceria reativada.', error ? 'erro' : 'ok');
     await carregarParcerias();
     if (!$('modal-perfil').hidden) verParceria(p.id);
@@ -871,16 +1045,13 @@
       <div class="perfil-acoes">
         ${p.img_localizacao && url(p.img_localizacao) ? `<button type="button" class="botao-primario botao-pequeno" data-ampliar="${esc(url(p.img_localizacao))}" data-titulo="Localização">📍 Ver localização</button>` : ''}
         <button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">✏️ Editar</button>
-        ${p.ativo
-          ? `<button type="button" class="botao-perigo botao-pequeno" data-encerrar-parceria="${esc(p.id)}">Encerrar parceria</button>`
-          : `<button type="button" class="botao botao-pequeno" data-reativar-parceria="${esc(p.id)}">Reativar</button>`}
       </div>
       <dl class="perfil-dados">
         <div><dt>Quem fez a parceria</dt><dd>${esc(p.feita_por_nome || '—')}</dd></div>
         <div><dt>Responsável / contato</dt><dd>${esc(p.responsavel || '—')}</dd></div>
         <div><dt>Cadastrada em</dt><dd>${esc(BD.dataHoraBR(p.criado_em))}</dd></div>
         <div><dt>Localização</dt><dd>${esc(p.localizacao || '—')}</dd></div>
-        <div class="largura-total"><dt>Produtos vendidos</dt><dd>${chipsProdutos(p.produtos)}</dd></div>
+        <div class="largura-total"><dt>Produtos que vendem</dt><dd>${chipsProdutos(p.produtos)}</dd></div>
         ${p.observacoes ? `<div class="largura-total"><dt>Observações</dt><dd>${esc(p.observacoes)}</dd></div>` : ''}
       </dl>
       ${imagem('img_localizacao') || imagem('img_cores') ? `<div class="perfil-imagens">${imagem('img_localizacao')}${imagem('img_cores')}</div>` : ''}
@@ -935,12 +1106,13 @@
     if (alvo.dataset.reativarParceria) return reativarParceria(p);
   }
   $('parcerias-tabela').addEventListener('click', acoesParceria);
+  $('parceria-situacao').addEventListener('click', acoesParceria);
   $('perfil-conteudo').addEventListener('click', acoesParceria);
 
   // Esc fecha a janela de cima.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    const topo = ['modal-imagem', 'modal-encerrar', 'modal-parceria', 'modal-perfil'].find((id) => !$(id).hidden);
+    const topo = ['modal-imagem', 'modal-cancelar-venda', 'modal-encerrar', 'modal-parceria', 'modal-perfil'].find((id) => !$(id).hidden);
     if (topo) BD.fecharModal($(topo));
   });
 
@@ -964,9 +1136,9 @@
           <td class="num">${formatarValor(p.preco_sem_parceria)}</td>
           <td class="dica">${p.craft_placa} placa · ${p.craft_material} ${esc(String(p.material_nome).toLowerCase())}</td>
           <td>${etiquetaAtivo(p.ativo)}</td>
-          <td class="acoes">
+          <td class="acoes">${pode('gerenciar_produtos') ? `
             <button type="button" class="botao botao-pequeno" data-editar-produto="${esc(p.id)}">Editar</button>
-            <button type="button" class="botao-perigo botao-pequeno" data-excluir-produto="${esc(p.id)}">Excluir</button>
+            <button type="button" class="botao-perigo botao-pequeno" data-excluir-produto="${esc(p.id)}">Excluir</button>` : ''}
           </td>
         </tr>`).join('')}
       </tbody></table>`;
@@ -1024,6 +1196,45 @@
   // ================================================================ configurações / Discord
 
   const REGEX_WEBHOOK = /^https:\/\/(canary\.|ptb\.)?(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+
+  // ================================================================ permissões (só líder)
+
+  let permissoesAtuais = {};
+
+  async function carregarPermissoes() {
+    const el = $('permissoes-lista');
+    el.innerHTML = '<p class="carregando">Carregando…</p>';
+    const [, cfg] = await Promise.all([carregarCargos(), db.from('configuracoes').select('permissoes').eq('id', 1).single()]);
+    if (cfg.error) { el.innerHTML = `<p class="status erro">${esc(BD.mensagemErro(cfg.error))}</p>`; return; }
+    permissoesAtuais = cfg.data.permissoes || {};
+    if (!cargosServidor.length) {
+      el.innerHTML = '<p class="dica">Nenhum cargo carregado ainda. Na aba Discord, salve o token do bot e clique em "Carregar cargos do servidor".</p>';
+      return;
+    }
+    el.innerHTML = PERMISSOES.map((perm) => `
+      <fieldset class="permissao" data-permissao="${perm.id}">
+        <legend>${esc(perm.nome)}</legend>
+        <p class="dica">${esc(perm.dica)}</p>
+        <div class="lista-cargos">${cargosServidor.map((c) => {
+          const cor = c.cor ? '#' + c.cor.toString(16).padStart(6, '0') : 'var(--texto-suave)';
+          const marcado = (permissoesAtuais[perm.id] || []).includes(c.id);
+          return `<label class="checkbox cargo-opcao"><input type="checkbox" value="${esc(c.id)}" ${marcado ? 'checked' : ''}>
+            <span class="cargo-cor" style="background:${cor}"></span> ${esc(c.nome)}</label>`;
+        }).join('')}</div>
+      </fieldset>`).join('');
+  }
+
+  $('permissoes-salvar').addEventListener('click', async () => {
+    const novas = {};
+    document.querySelectorAll('#permissoes-lista [data-permissao]').forEach((f) => {
+      novas[f.dataset.permissao] = [...f.querySelectorAll('input:checked')].map((i) => i.value);
+    });
+    const botao = $('permissoes-salvar');
+    botao.disabled = true;
+    const { error } = await db.from('configuracoes').update({ permissoes: novas, atualizado_em: new Date().toISOString() }).eq('id', 1);
+    botao.disabled = false;
+    BD.toast(error ? BD.mensagemErro(error) : 'Permissões salvas.', error ? 'erro' : 'ok');
+  });
 
   async function carregarConfig() {
     const { data, error } = await db.from('configuracoes').select('*').eq('id', 1).single();

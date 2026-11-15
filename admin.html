@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=13">
+<link rel="stylesheet" href="css/style.css?v=15">
 </head>
 <body>
 
@@ -52,7 +52,8 @@
       <button type="button" role="tab" data-aba="vendedores" aria-selected="false">👤 Vendedores</button>
       <button type="button" role="tab" data-aba="parcerias" aria-selected="false">🤝 Parcerias</button>
       <button type="button" role="tab" data-aba="produtos" aria-selected="false">📦 Produtos</button>
-      <button type="button" role="tab" data-aba="config" aria-selected="false">🔔 Discord</button>
+      <button type="button" role="tab" data-aba="config" aria-selected="false" hidden>🔔 Discord</button>
+      <button type="button" role="tab" data-aba="permissoes" aria-selected="false" hidden>🔐 Permissões</button>
     </nav>
 
     <!-- Relatório semanal -->
@@ -119,7 +120,7 @@
         <h2>Parcerias <button type="button" class="botao-primario botao-pequeno" data-novo="parceria">+ Nova parceria</button></h2>
         <div class="grade-form filtros-parcerias">
           <div><label class="rotulo" for="parcerias-busca">Pesquisar</label><input id="parcerias-busca" type="search" placeholder="Nome, responsável ou produto…" autocomplete="off"></div>
-          <div><label class="rotulo" for="parcerias-produto">Produto vendido</label><select id="parcerias-produto"><option value="">Todos os produtos</option></select></div>
+          <div><label class="rotulo" for="parcerias-produto">Produto da organização</label><select id="parcerias-produto"><option value="">Todos os produtos</option></select></div>
           <div><label class="rotulo" for="parcerias-status">Status</label><select id="parcerias-status"><option value="">Todas</option><option value="ativa">Ativas</option><option value="encerrada">Encerradas</option></select></div>
         </div>
         <div id="parcerias-tabela" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
@@ -135,6 +136,15 @@
     </section>
 
     <!-- Configurações / Discord -->
+    <section id="aba-permissoes" class="painel" role="tabpanel" hidden>
+      <div class="cartao">
+        <h2>🔐 Permissões das ações de impacto</h2>
+        <p class="dica">Escolha quais cargos do servidor podem fazer cada ação. O líder (administrador manual) sempre pode tudo, e só ele altera esta tela e a aba Discord. Quem não tiver a permissão nem vê o botão.</p>
+        <div id="permissoes-lista"><p class="carregando">Carregando…</p></div>
+        <button id="permissoes-salvar" type="button" class="botao-primario">💾 Salvar permissões</button>
+      </div>
+    </section>
+
     <section id="aba-config" class="painel" role="tabpanel" hidden>
       <form id="form-config" class="cartao">
         <h2>Notificações no Discord</h2>
@@ -208,8 +218,8 @@
       <div><label class="rotulo" for="parceria-feita-por">Quem fez a parceria</label>
         <select id="parceria-feita-por"></select></div>
       <div class="largura-total">
-        <span class="rotulo">Produtos vendidos para a parceria</span>
-        <div id="parceria-produtos" class="lista-produtos-escolha"></div>
+        <span class="rotulo">Produtos que a organização vende <span class="opcional">(digite; se já existir em outra parceria, é só selecionar)</span></span>
+        <div id="parceria-produtos" class="editor-produtos"></div>
       </div>
       <div class="largura-total"><label class="rotulo" for="parceria-localizacao">Localização <span class="opcional">(descrição)</span></label>
         <input id="parceria-localizacao" type="text" maxlength="200" autocomplete="off" placeholder="Ex.: galpão atrás do posto, Sandy Shores"></div>
@@ -221,7 +231,8 @@
       <div class="largura-total"><label class="rotulo" for="parceria-observacoes">Observações</label>
         <textarea id="parceria-observacoes" maxlength="500" rows="3"></textarea></div>
     </div>
-    <p class="dica">Imagens PNG, JPG, WEBP ou GIF de até 5 MB. Só administradores conseguem vê-las.</p>
+    <p class="dica">Imagens: clique no quadro e cole um print (Ctrl+V), arraste a imagem ou escolha o arquivo. PNG, JPG, WEBP ou GIF de até 5 MB; só administradores conseguem vê-las.</p>
+    <div id="parceria-situacao" class="parceria-situacao" hidden></div>
     <p id="parceria-erro" class="status erro" hidden></p>
     <button id="parceria-salvar" type="submit" class="botao-primario botao-bloco">💾 Salvar</button>
     <button id="parceria-cancelar" type="button" class="botao-secundario botao-bloco">Cancelar</button>
@@ -246,6 +257,19 @@
     <p id="encerrar-erro" class="status erro" hidden></p>
     <button id="encerrar-confirmar" type="submit" class="botao-perigo botao-bloco">Encerrar parceria</button>
     <button id="encerrar-cancelar" type="button" class="botao-secundario botao-bloco">Cancelar</button>
+  </form>
+</div>
+
+<!-- Cancelar venda -->
+<div id="modal-cancelar-venda" class="modal-fundo" hidden>
+  <form id="form-cancelar-venda" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="cancelar-venda-titulo" novalidate>
+    <h2 id="cancelar-venda-titulo">Cancelar venda</h2>
+    <p class="modal-texto"><strong id="cancelar-venda-info"></strong><br>A venda deixa de contar nos relatórios, no ranking e na comissão.</p>
+    <label class="rotulo" for="cancelar-venda-motivo">Justificativa <span class="obrigatorio">*</span></label>
+    <textarea id="cancelar-venda-motivo" maxlength="300" rows="3" placeholder="Ex.: registrada em duplicidade, cliente desistiu…"></textarea>
+    <p id="cancelar-venda-erro" class="status erro" hidden></p>
+    <button id="cancelar-venda-confirmar" type="submit" class="botao-perigo botao-bloco">Cancelar venda</button>
+    <button id="cancelar-venda-voltar" type="button" class="botao-secundario botao-bloco">Voltar</button>
   </form>
 </div>
 
@@ -280,6 +304,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=6"></script>
-<script src="js/admin.js?v=7"></script>
+<script src="js/admin.js?v=10"></script>
 </body>
 </html>

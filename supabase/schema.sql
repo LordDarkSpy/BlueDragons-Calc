@@ -100,6 +100,10 @@ create table if not exists public.vendas (
 );
 
 create index if not exists vendas_criado_em_idx on public.vendas (criado_em);
+
+-- Cancelamento exige justificativa (função cancelar_venda).
+alter table public.vendas add column if not exists cancelada_motivo text;
+alter table public.vendas add column if not exists cancelada_por text;
 create index if not exists vendas_vendedor_idx on public.vendas (vendedor_id);
 
 create table if not exists public.venda_itens (
@@ -143,6 +147,11 @@ update public.configuracoes set discord_servidor_id = '1549634672877633588' wher
 -- Cargos do servidor que dão acesso ao painel administrativo.
 alter table public.configuracoes add column if not exists cargos_admin text[] not null default '{}';
 
+-- Permissões das ações de impacto, por cargo do servidor: {"encerrar_parceria": ["<id do cargo>", ...], ...}.
+-- O líder (administrador manual) tem todas e é quem gerencia esta lista.
+alter table public.configuracoes add column if not exists permissoes jsonb not null default '{}'
+  check (jsonb_typeof(permissoes) = 'object');
+
 -- Pedidos feitos ao Discord (pg_net responde de forma assíncrona).
 create table if not exists public.discord_pedidos (
   request_id bigint primary key,
@@ -163,7 +172,16 @@ create table if not exists public.discord_cargos (
 );
 
 -- Cadastro completo das parcerias.
-alter table public.parcerias add column if not exists produtos uuid[] not null default '{}';  -- produtos do catálogo que a parceria compra
+-- produtos: o que a organização parceira vende (texto, com a grafia padronizada entre as parcerias).
+-- A primeira versão guardava produtos do nosso catálogo (uuid[]); troca pelo formato novo.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'parcerias' and column_name = 'produtos' and udt_name = '_uuid') then
+    alter table public.parcerias drop column produtos;
+  end if;
+end $$;
+alter table public.parcerias add column if not exists produtos text[] not null default '{}';
 alter table public.parcerias add column if not exists localizacao text check (localizacao is null or length(localizacao) <= 200);
 alter table public.parcerias add column if not exists img_localizacao text;  -- caminhos no Storage (bucket "parcerias")
 alter table public.parcerias add column if not exists img_banner text;
@@ -279,6 +297,36 @@ as $$
       );
 $$;
 
+-- Líder: administrador manual (marcado no cadastro) ou da tabela admins. Tem todas as permissões.
+create or replace function public._e_lider()
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$
+  select exists (select 1 from public.admins where user_id = auth.uid())
+      or exists (select 1 from public.vendedores v where v.ativo and v.admin and v.discord_id = public._discord_id());
+$$;
+
+-- Ações de impacto que o líder libera por cargo.
+create or replace function public._permissoes_validas()
+returns text[]
+language sql immutable
+as $$ select array['encerrar_parceria', 'registrar_pagamento', 'cancelar_venda', 'gerenciar_vendedores', 'gerenciar_produtos'] $$;
+
+create or replace function public.tem_permissao(p_permissao text)
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$
+  select public.is_admin() and (
+    public._e_lider()
+    or exists (
+      select 1 from public.vendedores v, public.configuracoes c
+      where c.id = 1 and v.ativo and v.discord_id = public._discord_id()
+        and v.cargos && coalesce(array(select jsonb_array_elements_text(coalesce(c.permissoes -> p_permissao, '[]'::jsonb))), '{}')
+    ));
+$$;
+
 alter table public.admins enable row level security;
 alter table public.produtos enable row level security;
 alter table public.parcerias enable row level security;
@@ -328,7 +376,7 @@ create policy produtos_leitura on public.produtos for select
   using (ativo or public.is_admin());
 drop policy if exists produtos_admin on public.produtos;
 create policy produtos_admin on public.produtos for all to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+  using (public.tem_permissao('gerenciar_produtos')) with check (public.tem_permissao('gerenciar_produtos'));
 
 drop policy if exists parcerias_leitura on public.parcerias;
 create policy parcerias_leitura on public.parcerias for select
@@ -351,15 +399,13 @@ drop policy if exists vendedores_admin on public.vendedores;
 create policy vendedores_admin on public.vendedores for select to authenticated
   using (public.is_admin());
 
--- Vendas: só o admin lê e cancela. Registro somente pela função registrar_venda.
+-- Vendas: só o admin lê. Registro pela função registrar_venda; cancelamento só pela
+-- função cancelar_venda (exige justificativa e a permissão "cancelar_venda").
 grant select on public.vendas, public.venda_itens to authenticated;
-grant update (cancelada, cancelada_em) on public.vendas to authenticated;
 drop policy if exists vendas_admin_leitura on public.vendas;
 create policy vendas_admin_leitura on public.vendas for select to authenticated
   using (public.is_admin());
 drop policy if exists vendas_admin_update on public.vendas;
-create policy vendas_admin_update on public.vendas for update to authenticated
-  using (public.is_admin()) with check (public.is_admin());
 drop policy if exists venda_itens_admin on public.venda_itens;
 create policy venda_itens_admin on public.venda_itens for select to authenticated
   using (public.is_admin());
@@ -372,11 +418,14 @@ drop policy if exists pagamentos_admin on public.pagamentos;
 create policy pagamentos_admin on public.pagamentos for select to authenticated
   using (public.is_admin());
 
--- Configurações: só o admin.
+-- Configurações: os admins leem; só o líder altera (Discord, cargos de acesso e permissões).
 grant select, update on public.configuracoes to authenticated;
 drop policy if exists configuracoes_admin on public.configuracoes;
-create policy configuracoes_admin on public.configuracoes for all to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+create policy configuracoes_admin on public.configuracoes for select to authenticated
+  using (public.is_admin());
+drop policy if exists configuracoes_lider on public.configuracoes;
+create policy configuracoes_lider on public.configuracoes for update to authenticated
+  using (public._e_lider()) with check (public._e_lider());
 
 -- Admins: cada um enxerga a própria linha (o site usa isso para saber se é admin).
 grant select on public.admins to authenticated;
@@ -434,7 +483,9 @@ as $$
     'id', v.id,
     'nome', coalesce(v.nome_discord, v.nome),
     'admin', public.is_admin(),
-    'admin_manual', coalesce(v.admin, false)
+    'admin_manual', coalesce(v.admin, false),
+    'lider', public._e_lider(),
+    'permissoes', (select coalesce(jsonb_object_agg(p, public.tem_permissao(p)), '{}'::jsonb) from unnest(public._permissoes_validas()) p)
   )
   from (select (public._vendedor_atual()).*) v;
 $$;
@@ -675,9 +726,15 @@ declare
   v_id uuid;
   v_discord text := trim(coalesce(p_discord_id, ''));
   v_proprio boolean;
+  v_admin_atual boolean;
 begin
-  if not public.is_admin() then
-    raise exception 'Acesso negado.';
+  if not public.tem_permissao('gerenciar_vendedores') then
+    raise exception 'Você não tem permissão para gerenciar vendedores.';
+  end if;
+  -- Administrador manual = líder: só um líder pode dar ou tirar.
+  select admin into v_admin_atual from public.vendedores where id = p_id;
+  if coalesce(p_admin, false) is distinct from coalesce(v_admin_atual, false) and not public._e_lider() then
+    raise exception 'Só o líder pode marcar ou desmarcar administrador manual.';
   end if;
   if v_discord !~ '^\d{17,20}$' then
     raise exception 'ID do Discord inválido: deve ter de 17 a 20 números.';
@@ -715,6 +772,37 @@ begin
 end;
 $$;
 
+-- Cancelar venda: exige justificativa, guarda quem cancelou e quando.
+create or replace function public.cancelar_venda(p_id uuid, p_motivo text)
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_motivo text := btrim(coalesce(p_motivo, ''));
+begin
+  if not public.tem_permissao('cancelar_venda') then raise exception 'Você não tem permissão para cancelar vendas.'; end if;
+  if length(v_motivo) < 3 then raise exception 'Informe a justificativa do cancelamento.'; end if;
+  if length(v_motivo) > 300 then raise exception 'A justificativa pode ter no máximo 300 caracteres.'; end if;
+  update public.vendas set cancelada = true, cancelada_em = now(), cancelada_motivo = v_motivo, cancelada_por = public._nome_logado()
+  where id = p_id and not cancelada;
+  if not found then raise exception 'Venda não encontrada ou já cancelada.'; end if;
+end;
+$$;
+
+create or replace function public.reativar_venda(p_id uuid)
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if not public.tem_permissao('cancelar_venda') then raise exception 'Você não tem permissão para reativar vendas.'; end if;
+  update public.vendas set cancelada = false, cancelada_em = null, cancelada_motivo = null, cancelada_por = null
+  where id = p_id and cancelada;
+  if not found then raise exception 'Venda não encontrada ou não está cancelada.'; end if;
+end;
+$$;
+
 -- -----------------------------------------------------------------------------
 -- Parcerias: histórico, encerramento com motivo e perfil
 -- -----------------------------------------------------------------------------
@@ -735,6 +823,10 @@ returns trigger
 language plpgsql security definer
 set search_path = public
 as $$
+declare
+  v_prod text;
+  v_padrao text;
+  v_lista text[];
 begin
   new.nome := btrim(new.nome);
   new.responsavel := nullif(btrim(coalesce(new.responsavel, '')), '');
@@ -749,8 +841,23 @@ begin
      or (new.img_cores is not null and new.img_cores !~ ('^' || new.id::text || '/[a-z0-9_.-]{1,80}$')) then
     raise exception 'Imagem inválida.';
   end if;
-  -- Produtos: só os que existem no catálogo, sem repetição.
-  new.produtos := coalesce((select array_agg(distinct p.id) from public.produtos p where p.id = any (new.produtos)), '{}');
+  -- Produtos da organização: limpa espaços, tira repetidos e usa a mesma grafia
+  -- de outra parceria quando o produto já existe (ignorando maiúsculas).
+  v_lista := '{}';
+  foreach v_prod in array coalesce(new.produtos, '{}') loop
+    v_prod := regexp_replace(btrim(coalesce(v_prod, '')), '\s+', ' ', 'g');
+    continue when v_prod = '';
+    if length(v_prod) > 40 then raise exception 'Nome de produto muito longo (máximo 40 caracteres).'; end if;
+    v_padrao := null;
+    select e into v_padrao from public.parcerias p2, unnest(p2.produtos) e
+    where p2.id <> new.id and lower(e) = lower(v_prod) limit 1;
+    v_prod := coalesce(v_padrao, v_prod);
+    if not exists (select 1 from unnest(v_lista) x where lower(x) = lower(v_prod)) then
+      v_lista := v_lista || v_prod;
+    end if;
+  end loop;
+  if coalesce(array_length(v_lista, 1), 0) > 20 then raise exception 'Informe no máximo 20 produtos.'; end if;
+  new.produtos := v_lista;
   if new.feita_por_id is not null then
     select coalesce(nome_discord, nome) into new.feita_por_nome from public.vendedores where id = new.feita_por_id;
   end if;
@@ -805,7 +912,7 @@ declare
   v_motivo text := btrim(coalesce(p_motivo, ''));
   v_quem text := public._nome_logado();
 begin
-  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  if not public.tem_permissao('encerrar_parceria') then raise exception 'Você não tem permissão para encerrar parcerias.'; end if;
   if length(v_motivo) < 3 then raise exception 'Informe o motivo do encerramento.'; end if;
   if length(v_motivo) > 500 then raise exception 'O motivo pode ter no máximo 500 caracteres.'; end if;
   update public.parcerias set ativo = false, encerrada_em = now(), encerrada_motivo = v_motivo, encerrada_por = v_quem
@@ -822,7 +929,7 @@ language plpgsql volatile security definer
 set search_path = public
 as $$
 begin
-  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  if not public.tem_permissao('encerrar_parceria') then raise exception 'Você não tem permissão para reativar parcerias.'; end if;
   update public.parcerias set ativo = true, encerrada_em = null, encerrada_motivo = null, encerrada_por = null
   where id = p_id and not ativo;
   if not found then raise exception 'Parceria não encontrada ou já ativa.'; end if;
@@ -1050,8 +1157,8 @@ language plpgsql volatile security definer
 set search_path = public
 as $$
 begin
-  if not public.is_admin() then
-    raise exception 'Acesso negado.';
+  if not public._e_lider() then
+    raise exception 'Só o líder pode configurar o Discord.';
   end if;
   if p_url !~ '^https://(canary\.|ptb\.)?(discord|discordapp)\.com/api/webhooks/' then
     raise exception 'URL de webhook do Discord inválida.';
@@ -1085,8 +1192,8 @@ declare
   v_id uuid;
   v_campos jsonb;
 begin
-  if not public.is_admin() then
-    raise exception 'Acesso negado.';
+  if not public.tem_permissao('registrar_pagamento') then
+    raise exception 'Você não tem permissão para registrar pagamentos.';
   end if;
   if v_ini is null then
     raise exception 'Semana inválida.';
@@ -1187,8 +1294,8 @@ declare
   v_token text := trim(coalesce(p_token, ''));
   v_id uuid;
 begin
-  if not public.is_admin() then
-    raise exception 'Acesso negado.';
+  if not public._e_lider() then
+    raise exception 'Só o líder pode configurar o Discord.';
   end if;
   v_token := regexp_replace(v_token, '^Bot\s+', '', 'i');
   if v_token !~ '^[A-Za-z0-9_.\-]{50,100}$' then
@@ -1398,6 +1505,8 @@ $$;
 revoke execute on all functions in schema public from public, anon, authenticated;
 
 grant execute on function public.is_admin() to anon, authenticated;
+grant execute on function public._e_lider() to authenticated;
+grant execute on function public.tem_permissao(text) to authenticated;
 grant execute on function public.meu_perfil() to authenticated;
 grant execute on function public.registrar_venda(jsonb, uuid, text, text) to authenticated;
 grant execute on function public.minha_semana() to authenticated;
@@ -1407,6 +1516,8 @@ grant execute on function public.relatorio_periodo(date, date) to authenticated;
 grant execute on function public.enviar_relatorio_discord(date) to authenticated;
 grant execute on function public.registrar_pagamento(uuid, date, text) to authenticated;
 grant execute on function public.encerrar_parceria(uuid, text) to authenticated;
+grant execute on function public.cancelar_venda(uuid, text) to authenticated;
+grant execute on function public.reativar_venda(uuid) to authenticated;
 grant execute on function public.reativar_parceria(uuid) to authenticated;
 grant execute on function public.perfil_parceria(uuid) to authenticated;
 grant execute on function public.testar_webhook(text) to authenticated;
