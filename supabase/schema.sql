@@ -185,6 +185,11 @@ create table if not exists public.parceria_historico (
 );
 create index if not exists parceria_historico_idx on public.parceria_historico (parceria_id, criado_em);
 
+-- Parcerias cadastradas antes do histórico existir ganham o registro de criação (com a data original).
+insert into public.parceria_historico (parceria_id, tipo, descricao, criado_em)
+select p.id, 'criada', 'Parceria cadastrada.', p.criado_em from public.parcerias p
+where not exists (select 1 from public.parceria_historico h where h.parceria_id = p.id);
+
 -- Imagens das parcerias: bucket privado, só administradores leem e enviam.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('parcerias', 'parcerias', false, 5242880, array['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
