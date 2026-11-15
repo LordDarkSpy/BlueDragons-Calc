@@ -57,6 +57,17 @@ Ao trocar a tabela de preços, salve com um nome novo (`tabela_v2.png`) e atuali
 
    Para descobrir o ID: Discord → Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no seu nome → **Copiar ID do usuário**. Os próximos cadastros são feitos pelo painel.
 
+### 2.1 Nomes do servidor do Discord (bot)
+
+O site mostra o nome que cada pessoa usa **no servidor** do Discord. Quem busca esses nomes é o próprio Supabase, usando a credencial de um bot: **nenhum programa fica rodando nem precisa de hospedagem** (o bot aparece sempre offline no servidor, isso é normal).
+
+1. No [Developer Portal](https://discord.com/developers/applications), abra a mesma aplicação do login → **Bot** → **Reset Token** e copie o token.
+2. Em **OAuth2 → URL Generator**, marque só o escopo `bot` (nenhuma permissão), abra o link gerado e adicione o bot ao servidor.
+3. No painel do site, aba **🔔 Discord** → *Nomes do servidor*: confira o **ID do servidor**, cole o **token do bot** e clique em **Salvar token**. O token vai para o cofre do Supabase (Vault) e não aparece mais no site.
+4. Na aba **Vendedores**, clique em **🔄 Atualizar nomes do Discord**. Depois disso os nomes se atualizam sozinhos a cada 10 minutos e sempre que alguém é cadastrado.
+
+Para trocar de servidor (por exemplo, sair do servidor de testes), basta mudar o ID do servidor no painel, salvar e adicionar o bot ao novo servidor.
+
 ### 3. Conectar o site
 
 Em **Project Settings → API**, copie a *Project URL* e a *anon public key* para `js/config.js`:

@@ -100,7 +100,7 @@
 
   async function carregarListasBase() {
     const [ve, pa, pr] = await Promise.all([
-      db.from('vendedores').select('id, nome, discord_id, admin, ativo, criado_em').order('nome'),
+      db.from('vendedores').select('id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em').order('nome'),
       db.from('parcerias').select('*').order('nome'),
       db.from('produtos').select('*').order('ordem').order('nome'),
     ]);
@@ -108,7 +108,7 @@
     cache.parcerias = pa.data || [];
     cache.produtos = pr.data || [];
     $('vendas-vendedor').innerHTML = '<option value="">Todos</option>'
-      + cache.vendedores.map((v) => `<option value="${esc(v.id)}">${esc(v.nome)}</option>`).join('');
+      + cache.vendedores.map((v) => `<option value="${esc(v.id)}">${esc(nomeVendedor(v))}</option>`).join('');
     $('vendas-parceria').innerHTML = '<option value="">Todas</option><option value="sem">Pista (sem parceria)</option>'
       + cache.parcerias.map((p) => `<option value="${esc(p.id)}">${esc(p.nome)}</option>`).join('');
   }
@@ -384,13 +384,13 @@
       return;
     }
     container.innerHTML = `<table>
-      <thead><tr><th>Nome</th><th>ID do Discord</th><th>Acesso</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Nome no Discord</th><th>ID do Discord</th><th>Acesso</th><th>Status</th><th></th></tr></thead>
       <tbody>${cache.vendedores.map((v) => `
         <tr>
-          <td>${esc(v.nome)}</td>
+          <td><strong>${esc(nomeVendedor(v))}</strong>${v.nome_discord && v.nome_discord !== v.nome ? `<div class="dica">cadastro: ${esc(v.nome)}</div>` : ''}${!v.nome_discord ? '<div class="dica">nome do servidor ainda não buscado</div>' : ''}</td>
           <td><code>${esc(v.discord_id)}</code>${v.discord_id === meuDiscordId ? ' <span class="dica">(você)</span>' : ''}</td>
           <td>${v.admin ? '<span class="etiqueta">Administrador</span>' : 'Vendedor'}</td>
-          <td>${etiquetaAtivo(v.ativo)}</td>
+          <td>${etiquetaAtivo(v.ativo)}${v.no_servidor === false ? ' <span class="etiqueta inativo">Fora do servidor</span>' : ''}</td>
           <td class="acoes"><button type="button" class="botao botao-pequeno" data-editar-vendedor="${esc(v.id)}">Editar</button></td>
         </tr>`).join('')}
       </tbody></table>`;
@@ -400,7 +400,8 @@
     const novo = !v;
     v = v || { ativo: true, admin: false };
     abrirEdicao(novo ? "Novo vendedor" : `Editar ${v.nome}`, [
-      { nome: "nome", rotulo: "Nome", valor: v.nome, obrigatorio: true, max: 40, largo: true },
+      { nome: "nome", rotulo: "Nome (reserva)", valor: v.nome, obrigatorio: true, max: 40, largo: true,
+        dica: "O site mostra o nome que a pessoa usa no servidor do Discord. Este nome só aparece enquanto o do Discord não for encontrado." },
       { nome: "discord_id", rotulo: "ID do Discord", valor: v.discord_id, obrigatorio: true, max: 20, inputmode: "numeric", largo: true,
         dica: "É com ele que a pessoa entra no site. No Discord: Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no nome → Copiar ID do usuário." },
       { nome: "ativo", rotulo: "Ativo (pode entrar e registrar vendas)", tipo: "checkbox", valor: v.ativo },
@@ -408,12 +409,49 @@
     ], async (val) => {
       if (val.nome.length < 2) throw new Error("O nome precisa ter pelo menos 2 letras.");
       if (!/^\d{17,20}$/.test(val.discord_id)) throw new Error("ID do Discord inválido: deve ter de 17 a 20 números.");
-      falhou(await db.rpc("salvar_vendedor", {
+      const id = falhou(await db.rpc("salvar_vendedor", {
         p_id: novo ? null : v.id, p_nome: val.nome, p_discord_id: val.discord_id, p_ativo: val.ativo, p_admin: val.admin,
       }));
-      carregarVendedores();
+      await carregarVendedores();
+      sincronizarNomes(id, true);
     });
   }
+
+  function nomeVendedor(v) {
+    return v.nome_discord || v.nome;
+  }
+
+  const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Pede os nomes ao Discord (pelo banco) e aplica as respostas, que chegam em 1 ou 2 segundos.
+  async function sincronizarNomes(vendedorId, silencioso) {
+    const botao = $('sincronizar-nomes');
+    const pedido = await db.rpc('discord_buscar_nomes', { p_vendedor_id: vendedorId || null });
+    if (pedido.error) {
+      if (!silencioso) BD.toast(BD.mensagemErro(pedido.error), 'erro');
+      return;
+    }
+    botao.disabled = true;
+    botao.textContent = '⏳ Buscando no Discord…';
+    const total = { atualizados: 0, fora_do_servidor: 0, erro: null };
+    for (let tentativa = 0; tentativa < 4; tentativa++) {
+      await esperar(1500);
+      const { data, error } = await db.rpc('discord_aplicar_nomes');
+      if (error) { total.erro = BD.mensagemErro(error); break; }
+      total.atualizados += data.atualizados;
+      total.fora_do_servidor += data.fora_do_servidor;
+      total.erro = data.erro || total.erro;
+      if (!data.pendentes) break;
+    }
+    botao.disabled = false;
+    botao.textContent = '🔄 Atualizar nomes do Discord';
+    await carregarVendedores();
+    if (total.erro) return BD.toast(total.erro, 'erro');
+    if (total.fora_do_servidor) return BD.toast(`${total.atualizados} nome(s) atualizado(s). ${total.fora_do_servidor} pessoa(s) fora do servidor.`, 'erro');
+    if (!silencioso || total.atualizados) BD.toast(`${total.atualizados} nome(s) atualizado(s) a partir do Discord.`, 'ok');
+  }
+
+  $('sincronizar-nomes').addEventListener('click', () => sincronizarNomes(null, false));
 
   $('vendedores-tabela').addEventListener('click', (e) => {
     const botao = e.target.closest('[data-editar-vendedor]');
@@ -568,6 +606,8 @@
     $('cfg-nome').value = data.nome_organizacao;
     $('cfg-moeda').value = data.moeda;
     $('cfg-comissao').value = Math.round(Number(data.percentual_comissao) * 1000) / 10;
+    $('cfg-servidor').value = data.discord_servidor_id || '';
+    atualizarStatusBot();
     BD.moeda = data.moeda || BD.moeda;
   }
 
@@ -578,12 +618,15 @@
     for (const url of [vendas, relatorios]) {
       if (url && !REGEX_WEBHOOK.test(url)) return BD.toast('URL de webhook do Discord inválida.', 'erro');
     }
+    const servidor = $('cfg-servidor').value.trim();
+    if (servidor && !/^\d{17,20}$/.test(servidor)) return BD.toast('ID do servidor inválido: deve ter de 17 a 20 números.', 'erro');
     const pct = Number($('cfg-comissao').value);
     if (!(pct >= 0 && pct <= 100)) return BD.toast('A comissão deve ficar entre 0 e 100%.', 'erro');
     const botao = $('cfg-salvar');
     botao.disabled = true;
     const { error } = await db.from('configuracoes').update({
       percentual_comissao: pct / 100,
+      discord_servidor_id: servidor || null,
       webhook_vendas: vendas || null,
       webhook_relatorios: relatorios || null,
       notificar_vendas: $('cfg-notificar').checked,
@@ -595,6 +638,27 @@
     botao.disabled = false;
     BD.toast(error ? BD.mensagemErro(error) : 'Configurações salvas.', error ? 'erro' : 'ok');
     if (!error) BD.moeda = $('cfg-moeda').value || 'R$ ';
+  });
+
+  async function atualizarStatusBot() {
+    const { data, error } = await db.rpc('discord_status');
+    const el = $('cfg-bot-status');
+    if (error) { el.textContent = BD.mensagemErro(error); return; }
+    el.textContent = data.bot_configurado ? '✅ Token do bot salvo. Para trocar, cole um novo token.' : '⚠️ Nenhum token salvo ainda.';
+  }
+
+  $('cfg-salvar-token').addEventListener('click', async () => {
+    const campo = $('cfg-token');
+    const token = campo.value.trim();
+    if (!token) return BD.toast('Cole o token do bot.', 'erro');
+    const botao = $('cfg-salvar-token');
+    botao.disabled = true;
+    const { error } = await db.rpc('salvar_token_bot', { p_token: token });
+    botao.disabled = false;
+    if (error) return BD.toast(BD.mensagemErro(error), 'erro');
+    campo.value = '';
+    BD.toast('Token salvo no cofre do Supabase.', 'ok');
+    atualizarStatusBot();
   });
 
   document.querySelectorAll('[data-testar]').forEach((b) => b.addEventListener('click', async () => {

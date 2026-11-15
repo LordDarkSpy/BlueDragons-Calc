@@ -109,7 +109,7 @@
     <!-- Vendedores -->
     <section id="aba-vendedores" class="painel" role="tabpanel" hidden>
       <div class="cartao">
-        <h2>Vendedores <button type="button" class="botao-primario botao-pequeno" data-novo="vendedor">+ Novo vendedor</button></h2>
+        <h2>Vendedores <span><button id="sincronizar-nomes" type="button" class="botao botao-pequeno">🔄 Atualizar nomes do Discord</button> <button type="button" class="botao-primario botao-pequeno" data-novo="vendedor">+ Novo vendedor</button></span></h2>
         <div id="vendedores-tabela" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
       </div>
     </section>
@@ -149,6 +149,17 @@
         </div>
         <label class="checkbox"><input id="cfg-automatico" type="checkbox"> Enviar o relatório da semana anterior toda segunda-feira às 09:00</label>
 
+        <h2 style="margin-top:22px">Nomes do servidor</h2>
+        <p class="dica">O site mostra o nome que cada vendedor usa no servidor do Discord. Os nomes são atualizados sozinhos a cada 10 minutos por um bot (não precisa hospedar nada).</p>
+        <label class="rotulo" for="cfg-servidor">ID do servidor do Discord</label>
+        <input id="cfg-servidor" type="text" inputmode="numeric" maxlength="20" placeholder="Botão direito no ícone do servidor → Copiar ID do servidor">
+        <label class="rotulo" for="cfg-token">Token do bot</label>
+        <div class="barra-ferramentas">
+          <input id="cfg-token" type="password" autocomplete="off" placeholder="Developer Portal → Bot → Reset Token" style="flex:1;min-width:220px">
+          <button id="cfg-salvar-token" type="button" class="botao">Salvar token</button>
+        </div>
+        <p id="cfg-bot-status" class="dica"></p>
+
         <div class="grade-form">
           <div><label class="rotulo" for="cfg-nome">Nome da organização</label><input id="cfg-nome" type="text" maxlength="40"></div>
           <div><label class="rotulo" for="cfg-moeda">Símbolo da moeda</label><input id="cfg-moeda" type="text" maxlength="5"></div>
@@ -178,6 +189,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=3"></script>
-<script src="js/admin.js?v=3"></script>
+<script src="js/admin.js?v=4"></script>
 </body>
 </html>

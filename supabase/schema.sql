@@ -61,6 +61,10 @@ alter table public.vendedores drop column if exists tentativas_falhas;
 alter table public.vendedores drop column if exists bloqueado_ate;
 alter table public.vendedores alter column discord_id set not null;
 create unique index if not exists vendedores_discord_id_idx on public.vendedores (discord_id);
+-- Nome que a pessoa usa no servidor do Discord (preenchido pelo bot, ver "Nomes do Discord").
+alter table public.vendedores add column if not exists nome_discord text;
+alter table public.vendedores add column if not exists no_servidor boolean;
+alter table public.vendedores add column if not exists nome_discord_em timestamptz;
 drop function if exists public.listar_vendedores();
 drop function if exists public.entrar_vendedor(uuid, text);
 drop function if exists public.sair_vendedor(text);
@@ -122,7 +126,19 @@ create table if not exists public.configuracoes (
   atualizado_em timestamptz not null default now()
 );
 
-insert into public.configuracoes (id) values (1) on conflict (id) do nothing;
+-- Servidor do Discord de onde vêm os nomes dos vendedores.
+alter table public.configuracoes add column if not exists discord_servidor_id text
+  check (discord_servidor_id is null or discord_servidor_id ~ '^\d{17,20}$');
+
+insert into public.configuracoes (id, discord_servidor_id) values (1, '1549634672877633588') on conflict (id) do nothing;
+update public.configuracoes set discord_servidor_id = '1549634672877633588' where id = 1 and discord_servidor_id is null;
+
+-- Pedidos feitos ao Discord (pg_net responde de forma assíncrona).
+create table if not exists public.discord_pedidos (
+  request_id bigint primary key,
+  vendedor_id uuid not null references public.vendedores (id) on delete cascade,
+  criado_em timestamptz not null default now()
+);
 
 -- Produtos iniciais (tabela de preços do Mercado Oculto). Só entram se a tabela estiver vazia.
 insert into public.produtos (nome, icone, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem)
@@ -207,7 +223,9 @@ create policy parcerias_admin on public.parcerias for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
 
 -- Vendedores: só o admin lê. Criação/edição via RPC salvar_vendedor.
-grant select (id, nome, discord_id, admin, ativo, criado_em) on public.vendedores to authenticated;
+grant select (id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em) on public.vendedores to authenticated;
+alter table public.discord_pedidos enable row level security;
+revoke all on public.discord_pedidos from anon, authenticated;
 drop policy if exists vendedores_admin on public.vendedores;
 create policy vendedores_admin on public.vendedores for select to authenticated
   using (public.is_admin());
@@ -285,7 +303,7 @@ as $$
     'discord_id', public._discord_id(),
     'cadastrado', v.id is not null,
     'id', v.id,
-    'nome', v.nome,
+    'nome', coalesce(v.nome_discord, v.nome),
     'admin', public.is_admin()
   )
   from (select (public._vendedor_atual()).*) v;
@@ -433,7 +451,7 @@ begin
   end if;
 
   insert into public.vendas (vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao)
-  values (v_vendedor.id, v_vendedor.nome, v_parceria.id, v_parceria.nome, v_com,
+  values (v_vendedor.id, coalesce(v_vendedor.nome_discord, v_vendedor.nome), v_parceria.id, v_parceria.nome, v_com,
           nullif(left(trim(coalesce(p_cliente, '')), 60), ''),
           v_total, v_comissao,
           nullif(left(trim(coalesce(p_observacao, '')), 300), ''))
@@ -554,8 +572,10 @@ as $$
     'percentual_comissao', (select percentual_comissao from public.configuracoes where id = 1),
     'por_vendedor', coalesce((
       select jsonb_agg(x order by x.total desc) from (
-        select vendedor_nome as nome, count(*) as quantidade, sum(total) as total, sum(comissao) as comissao
-        from v group by vendedor_id, vendedor_nome
+        select coalesce(max(vd.nome_discord), max(vd.nome), max(v.vendedor_nome)) as nome,
+               count(*) as quantidade, sum(v.total) as total, sum(v.comissao) as comissao
+        from v left join public.vendedores vd on vd.id = v.vendedor_id
+        group by v.vendedor_id
       ) x), '[]'::jsonb),
     'por_parceria', coalesce((
       select jsonb_agg(x order by x.total desc) from (
@@ -707,6 +727,180 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
+-- Nomes do Discord (bot)
+-- O "bot" é só uma credencial: nenhum programa fica rodando. O próprio banco
+-- consulta a API do Discord (pg_net) para saber o nome de cada vendedor no
+-- servidor configurado. O token do bot fica no Vault do Supabase.
+-- -----------------------------------------------------------------------------
+
+create or replace function public._token_bot()
+returns text
+language sql stable security definer
+set search_path = public
+as $$
+  select decrypted_secret from vault.decrypted_secrets where name = 'discord_bot_token' limit 1;
+$$;
+
+-- Grava (ou troca) o token do bot no Vault. O token nunca é devolvido ao site.
+create or replace function public.salvar_token_bot(p_token text)
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_token text := trim(coalesce(p_token, ''));
+  v_id uuid;
+begin
+  if not public.is_admin() then
+    raise exception 'Acesso negado.';
+  end if;
+  v_token := regexp_replace(v_token, '^Bot\s+', '', 'i');
+  if v_token !~ '^[A-Za-z0-9_.\-]{50,100}$' then
+    raise exception 'Token do bot inválido. Copie em Developer Portal → Bot → Reset Token.';
+  end if;
+  select id into v_id from vault.secrets where name = 'discord_bot_token';
+  if v_id is null then
+    perform vault.create_secret(v_token, 'discord_bot_token', 'Token do bot do Discord (nomes dos vendedores)');
+  else
+    perform vault.update_secret(v_id, v_token);
+  end if;
+end;
+$$;
+
+create or replace function public.discord_status()
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Acesso negado.';
+  end if;
+  return jsonb_build_object(
+    'bot_configurado', public._token_bot() is not null,
+    'servidor_id', (select discord_servidor_id from public.configuracoes where id = 1),
+    'pendentes', (select count(*) from public.discord_pedidos)
+  );
+end;
+$$;
+
+-- Pede ao Discord os dados de um vendedor (ou de todos os ativos, se p_vendedor_id for nulo).
+create or replace function public._discord_buscar_nomes(p_vendedor_id uuid)
+returns int
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_token text := public._token_bot();
+  v_servidor text := (select discord_servidor_id from public.configuracoes where id = 1);
+  v record;
+  v_req bigint;
+  v_qtd int := 0;
+begin
+  if v_token is null or v_servidor is null then
+    return 0;
+  end if;
+  delete from public.discord_pedidos where criado_em < now() - interval '1 hour';
+  for v in
+    select id, discord_id from public.vendedores
+    where (p_vendedor_id is null and ativo) or id = p_vendedor_id
+  loop
+    v_req := net.http_get(
+      url := 'https://discord.com/api/v10/guilds/' || v_servidor || '/members/' || v.discord_id,
+      headers := jsonb_build_object('Authorization', 'Bot ' || v_token, 'User-Agent', 'BlueDragonsCalc (supabase, 1.0)')
+    );
+    insert into public.discord_pedidos (request_id, vendedor_id) values (v_req, v.id);
+    v_qtd := v_qtd + 1;
+  end loop;
+  return v_qtd;
+end;
+$$;
+
+-- Lê as respostas que já chegaram e atualiza os nomes.
+create or replace function public._discord_aplicar_nomes()
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  r record;
+  v_corpo jsonb;
+  v_nome text;
+  v_atualizados int := 0;
+  v_fora int := 0;
+  v_erro text;
+begin
+  for r in
+    select p.request_id, p.vendedor_id, h.status_code, h.content, h.error_msg, h.timed_out
+    from public.discord_pedidos p
+    join net._http_response h on h.id = p.request_id
+  loop
+    begin
+      v_corpo := r.content::jsonb;
+    exception when others then
+      v_corpo := null;
+    end;
+
+    if r.status_code = 200 and v_corpo is not null then
+      v_nome := coalesce(nullif(v_corpo->>'nick', ''), nullif(v_corpo->'user'->>'global_name', ''), v_corpo->'user'->>'username');
+      update public.vendedores
+         set nome_discord = left(v_nome, 40), no_servidor = true, nome_discord_em = now()
+       where id = r.vendedor_id;
+      v_atualizados := v_atualizados + 1;
+    elsif r.status_code = 404 and (v_corpo->>'code') = '10007' then
+      -- Unknown Member: a pessoa não está no servidor.
+      update public.vendedores set no_servidor = false, nome_discord_em = now() where id = r.vendedor_id;
+      v_fora := v_fora + 1;
+    else
+      v_erro := case
+        when r.status_code = 401 then 'Token do bot inválido. Gere um novo e salve de novo.'
+        when (v_corpo->>'code') = '10004' or r.status_code = 403 then 'O bot não está no servidor configurado. Convide o bot para o servidor.'
+        when r.status_code = 429 then 'O Discord limitou as consultas. Tente de novo em alguns minutos.'
+        when r.timed_out then 'O Discord não respondeu a tempo.'
+        else 'Erro do Discord: ' || coalesce(r.status_code::text, '') || ' ' || coalesce(left(v_corpo->>'message', 120), r.error_msg, '')
+      end;
+    end if;
+    delete from public.discord_pedidos where request_id = r.request_id;
+  end loop;
+
+  return jsonb_build_object('atualizados', v_atualizados, 'fora_do_servidor', v_fora, 'erro', v_erro,
+                            'pendentes', (select count(*) from public.discord_pedidos));
+end;
+$$;
+
+create or replace function public.discord_buscar_nomes(p_vendedor_id uuid default null)
+returns int
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Acesso negado.';
+  end if;
+  if public._token_bot() is null then
+    raise exception 'Configure o token do bot na aba Discord.';
+  end if;
+  if (select discord_servidor_id from public.configuracoes where id = 1) is null then
+    raise exception 'Configure o ID do servidor na aba Discord.';
+  end if;
+  return public._discord_buscar_nomes(p_vendedor_id);
+end;
+$$;
+
+create or replace function public.discord_aplicar_nomes()
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Acesso negado.';
+  end if;
+  return public._discord_aplicar_nomes();
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
 -- Permissões de execução das funções
 -- -----------------------------------------------------------------------------
 
@@ -720,6 +914,10 @@ grant execute on function public.salvar_vendedor(uuid, text, text, boolean, bool
 grant execute on function public.relatorio_periodo(date, date) to authenticated;
 grant execute on function public.enviar_relatorio_discord(date) to authenticated;
 grant execute on function public.testar_webhook(text) to authenticated;
+grant execute on function public.salvar_token_bot(text) to authenticated;
+grant execute on function public.discord_status() to authenticated;
+grant execute on function public.discord_buscar_nomes(uuid) to authenticated;
+grant execute on function public.discord_aplicar_nomes() to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Agendamento: relatório semanal toda segunda às 09:00 (horário de Brasília).
@@ -727,3 +925,7 @@ grant execute on function public.testar_webhook(text) to authenticated;
 
 select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-relatorio-semanal';
 select cron.schedule('bluedragons-relatorio-semanal', '0 12 * * 1', 'select public._relatorio_automatico()');
+
+-- Nomes do Discord: aplica as respostas anteriores e pede os nomes de novo a cada 10 minutos.
+select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-nomes-discord';
+select cron.schedule('bluedragons-nomes-discord', '*/10 * * * *', 'select public._discord_aplicar_nomes(); select public._discord_buscar_nomes(null);');
