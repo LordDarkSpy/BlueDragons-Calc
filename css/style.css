@@ -754,3 +754,20 @@ tr.cancelada td.acoes { opacity: 1; text-decoration: none; }
   .podio-base { margin: 10px -6px 0; }
   .seletor-periodo label { min-width: calc(50% - 5px); }
 }
+
+/* Relatório: pagamentos e quadros de baixo */
+
+.grade-relatorio-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 980px) { .grade-relatorio-3 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); } }
+
+.tabela-pagamentos td { vertical-align: middle; }
+.tabela-pagamentos td.acao { text-align: right; white-space: nowrap; width: 1%; }
+.etiqueta.pago { background: rgba(46, 204, 113, 0.15); color: var(--verde); }
+.etiqueta.pendente { background: rgba(240, 178, 50, 0.15); color: var(--amarelo); }
+.etiqueta.sem-valor { background: rgba(255, 255, 255, 0.06); color: var(--texto-suave); }
+.pagamento-info { display: block; margin-top: 3px; font-size: 0.75rem; color: var(--texto-suave); }
+.rel-produto { display: inline-flex; align-items: center; gap: 6px; }
+
+.pagamento-valor { margin: 6px 0 14px; padding: 14px; border: 1px solid var(--borda); border-radius: 10px; background: var(--cartao-item); }
+.pagamento-valor strong { display: block; font-size: 2rem; color: var(--verde); font-variant-numeric: tabular-nums; margin: 2px 0; }
+#form-pagamento .rotulo { text-align: left; margin-top: 14px; }

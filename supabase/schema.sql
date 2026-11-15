@@ -162,6 +162,22 @@ create table if not exists public.discord_cargos (
   atualizado_em timestamptz not null default now()
 );
 
+-- Pagamentos das comissões semanais aos vendedores.
+-- Pode haver mais de um por semana (ex.: uma venda entrou depois do pagamento
+-- e a diferença foi paga em seguida).
+create table if not exists public.pagamentos (
+  id uuid primary key default gen_random_uuid(),
+  vendedor_id uuid not null references public.vendedores (id) on delete restrict,
+  vendedor_nome text not null,
+  semana_inicio date not null check (extract(isodow from semana_inicio) = 1),
+  valor numeric(12, 2) not null check (valor > 0),
+  observacao text check (observacao is null or length(observacao) <= 300),
+  pago_por_discord text,
+  pago_por_nome text,
+  pago_em timestamptz not null default now()
+);
+create index if not exists pagamentos_semana_idx on public.pagamentos (semana_inicio, vendedor_id);
+
 -- Produtos iniciais (tabela de preços do Mercado Oculto). Só entram se a tabela estiver vazia.
 insert into public.produtos (nome, icone, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem)
 select * from (values
@@ -285,6 +301,14 @@ create policy vendas_admin_update on public.vendas for update to authenticated
   using (public.is_admin()) with check (public.is_admin());
 drop policy if exists venda_itens_admin on public.venda_itens;
 create policy venda_itens_admin on public.venda_itens for select to authenticated
+  using (public.is_admin());
+
+-- Pagamentos: só o admin lê. Registro somente pela função registrar_pagamento.
+alter table public.pagamentos enable row level security;
+revoke all on public.pagamentos from anon, authenticated;
+grant select on public.pagamentos to authenticated;
+drop policy if exists pagamentos_admin on public.pagamentos;
+create policy pagamentos_admin on public.pagamentos for select to authenticated
   using (public.is_admin());
 
 -- Configurações: só o admin.
@@ -655,10 +679,20 @@ as $$
     'percentual_comissao', (select percentual_comissao from public.configuracoes where id = 1),
     'por_vendedor', coalesce((
       select jsonb_agg(x order by x.total desc) from (
-        select coalesce(max(vd.nome_discord), max(vd.nome), max(v.vendedor_nome)) as nome,
-               count(*) as quantidade, sum(v.total) as total, sum(v.comissao) as comissao
-        from v left join public.vendedores vd on vd.id = v.vendedor_id
-        group by v.vendedor_id
+        select s.*, coalesce(pg.pago, 0) as pago, greatest(s.comissao - coalesce(pg.pago, 0), 0) as pendente,
+               pg.pago_em, pg.pago_por
+        from (
+          select v.vendedor_id, coalesce(max(vd.nome_discord), max(vd.nome), max(v.vendedor_nome)) as nome,
+                 count(*) as quantidade, sum(v.total) as total, sum(v.comissao) as comissao
+          from v left join public.vendedores vd on vd.id = v.vendedor_id
+          group by v.vendedor_id
+        ) s
+        left join lateral (
+          select sum(p.valor) as pago, max(p.pago_em) as pago_em,
+                 (array_agg(p.pago_por_nome order by p.pago_em desc))[1] as pago_por
+          from public.pagamentos p
+          where p.vendedor_id = s.vendedor_id and p.semana_inicio = public._inicio_semana(p_inicio)
+        ) pg on true
       ) x), '[]'::jsonb),
     'por_parceria', coalesce((
       select jsonb_agg(x order by x.total desc) from (
@@ -667,9 +701,11 @@ as $$
       ) x), '[]'::jsonb),
     'por_produto', coalesce((
       select jsonb_agg(x order by x.total desc) from (
-        select i.produto_nome as nome, max(i.icone) as icone, sum(i.quantidade) as quantidade, sum(i.subtotal) as total,
+        select i.produto_nome as nome, max(i.icone) as icone, max(pr.imagem) as imagem,
+               sum(i.quantidade) as quantidade, sum(i.subtotal) as total,
                sum(i.craft_placa) as craft_placa, sum(i.craft_material) as craft_material, max(i.material_nome) as material_nome
         from public.venda_itens i join v on v.id = i.venda_id
+        left join public.produtos pr on pr.id = i.produto_id
         group by i.produto_nome
       ) x), '[]'::jsonb),
     'craft', coalesce((
@@ -740,14 +776,13 @@ begin
       'fields', jsonb_build_array(
         jsonb_build_object('name', 'Total vendido', 'value', '**' || public._formatar_valor((r->>'total')::numeric) || '**', 'inline', true),
         jsonb_build_object('name', 'Vendas', 'value', r->>'quantidade', 'inline', true),
-        jsonb_build_object('name', 'Ticket médio', 'value',
-          public._formatar_valor(case when (r->>'quantidade')::int > 0 then (r->>'total')::numeric / (r->>'quantidade')::int else 0 end), 'inline', true),
         jsonb_build_object('name', 'Com parceria', 'value', public._formatar_valor((r->>'total_com_parceria')::numeric), 'inline', true),
         jsonb_build_object('name', 'Pista', 'value', public._formatar_valor((r->>'total_sem_parceria')::numeric), 'inline', true),
         jsonb_build_object('name', 'Comissões', 'value', public._formatar_valor((r->>'comissao')::numeric), 'inline', true),
         jsonb_build_object('name', '🏆 Vendedores', 'value', public._linhas_relatorio(r->'por_vendedor')),
         jsonb_build_object('name', '💰 Pagamento (' || round((r->>'percentual_comissao')::numeric * 100) || '%)', 'value', coalesce((
-          select left(string_agg('**' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'comissao')::numeric), E'\n' order by ord), 1024)
+          select left(string_agg('**' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'comissao')::numeric)
+                   || case when (e->>'pendente')::numeric <= 0 then ' ✅ pago' else ' ⏳ pendente' end, E'\n' order by ord), 1024)
           from jsonb_array_elements(r->'por_vendedor') with ordinality as t (e, ord) where ord <= 20), '—')),
         jsonb_build_object('name', '🤝 Parcerias', 'value', public._linhas_relatorio(r->'por_parceria')),
         jsonb_build_object('name', '📦 Produtos', 'value', public._linhas_relatorio(r->'por_produto', true)),
@@ -806,6 +841,105 @@ begin
     'username', (select nome_organizacao from public.configuracoes where id = 1) || ' — Teste',
     'content', '✅ Webhook configurado com sucesso na calculadora.'
   ));
+end;
+$$;
+
+-- Registra o pagamento da comissão de um vendedor numa semana e avisa no Discord.
+-- O valor é calculado aqui (o que ainda falta pagar), nunca vem do navegador.
+create or replace function public.registrar_pagamento(p_vendedor_id uuid, p_semana_inicio date, p_observacao text default null)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  c public.configuracoes;
+  vd public.vendedores;
+  eu public.vendedores;
+  v_ini date := public._inicio_semana(p_semana_inicio);
+  v_comissao numeric;
+  v_pago numeric;
+  v_valor numeric;
+  v_obs text := nullif(btrim(coalesce(p_observacao, '')), '');
+  v_nome text;
+  v_quem text;
+  v_url text;
+  v_id uuid;
+  v_campos jsonb;
+begin
+  if not public.is_admin() then
+    raise exception 'Acesso negado.';
+  end if;
+  if v_ini is null then
+    raise exception 'Semana inválida.';
+  end if;
+  if length(v_obs) > 300 then
+    raise exception 'A observação pode ter no máximo 300 caracteres.';
+  end if;
+  select * into vd from public.vendedores where id = p_vendedor_id;
+  if vd.id is null then
+    raise exception 'Vendedor não encontrado.';
+  end if;
+
+  -- Evita pagamento em dobro com dois cliques (ou dois admins) ao mesmo tempo.
+  perform pg_advisory_xact_lock(hashtext('pagamento:' || p_vendedor_id::text || ':' || v_ini::text));
+
+  select coalesce(sum(ve.comissao), 0) into v_comissao
+  from public.vendas ve
+  where ve.vendedor_id = p_vendedor_id and not ve.cancelada
+    and ve.criado_em >= (v_ini::timestamp at time zone 'America/Sao_Paulo')
+    and ve.criado_em < ((v_ini + 7)::timestamp at time zone 'America/Sao_Paulo');
+  select coalesce(sum(valor), 0) into v_pago
+  from public.pagamentos where vendedor_id = p_vendedor_id and semana_inicio = v_ini;
+
+  v_valor := v_comissao - v_pago;
+  if v_valor <= 0 then
+    raise exception 'Não há valor pendente para este vendedor nesta semana.';
+  end if;
+
+  eu := public._vendedor_atual();
+  v_nome := coalesce(vd.nome_discord, vd.nome);
+  v_quem := coalesce(eu.nome_discord, eu.nome, 'Administrador');
+
+  insert into public.pagamentos (vendedor_id, vendedor_nome, semana_inicio, valor, observacao, pago_por_discord, pago_por_nome)
+  values (vd.id, v_nome, v_ini, v_valor, v_obs, public._discord_id(), v_quem)
+  returning id into v_id;
+
+  -- Aviso no Discord (falha no envio não desfaz o pagamento).
+  begin
+    select * into c from public.configuracoes where id = 1;
+    v_url := coalesce(nullif(c.webhook_relatorios, ''), nullif(c.webhook_vendas, ''));
+    if v_url is not null then
+      v_campos := jsonb_build_array(
+        jsonb_build_object('name', 'Vendedor', 'value', v_nome, 'inline', true),
+        jsonb_build_object('name', 'Semana', 'value', to_char(v_ini, 'DD/MM') || ' a ' || to_char(v_ini + 6, 'DD/MM/YYYY'), 'inline', true),
+        jsonb_build_object('name', 'Valor pago', 'value', '**' || public._formatar_valor(v_valor) || '**', 'inline', true),
+        jsonb_build_object('name', 'Pago por', 'value', v_quem, 'inline', true)
+      );
+      if v_pago > 0 then
+        v_campos := v_campos || jsonb_build_object('name', 'Total pago na semana', 'value',
+          public._formatar_valor(v_comissao) || ' (já tinha ' || public._formatar_valor(v_pago) || ')', 'inline', true);
+      end if;
+      if v_obs is not null then
+        v_campos := v_campos || jsonb_build_object('name', 'Observação', 'value', v_obs);
+      end if;
+      perform net.http_post(url := v_url, body := jsonb_build_object(
+        'username', c.nome_organizacao || ' — Pagamentos',
+        'content', '||<@' || vd.discord_id || '>||',
+        'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb, 'users', jsonb_build_array(vd.discord_id)),
+        'embeds', jsonb_build_array(jsonb_build_object(
+          'title', '💸 Pagamento registrado',
+          'color', 3066993,
+          'fields', v_campos,
+          'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao),
+          'timestamp', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+        ))
+      ));
+    end if;
+  exception when others then
+    raise warning 'Falha ao avisar pagamento %: %', v_id, sqlerrm;
+  end;
+
+  return jsonb_build_object('id', v_id, 'valor', v_valor, 'semana_inicio', v_ini, 'notificado', v_url is not null);
 end;
 $$;
 
@@ -1052,6 +1186,7 @@ grant execute on function public.ranking_vendedores(date, date) to authenticated
 grant execute on function public.salvar_vendedor(uuid, text, text, boolean, boolean) to authenticated;
 grant execute on function public.relatorio_periodo(date, date) to authenticated;
 grant execute on function public.enviar_relatorio_discord(date) to authenticated;
+grant execute on function public.registrar_pagamento(uuid, date, text) to authenticated;
 grant execute on function public.testar_webhook(text) to authenticated;
 grant execute on function public.salvar_token_bot(text) to authenticated;
 grant execute on function public.discord_status() to authenticated;

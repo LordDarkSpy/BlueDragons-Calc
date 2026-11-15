@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=6">
+<link rel="stylesheet" href="css/style.css?v=7">
 </head>
 <body>
 
@@ -73,14 +73,13 @@
       <div class="kpis">
         <div class="kpi"><span>Total vendido</span><strong id="kpi-total">—</strong><small id="kpi-variacao"></small></div>
         <div class="kpi"><span>Vendas</span><strong id="kpi-quantidade">—</strong></div>
-        <div class="kpi"><span>Ticket médio</span><strong id="kpi-ticket">—</strong></div>
         <div class="kpi"><span>Com parceria</span><strong id="kpi-com">—</strong></div>
         <div class="kpi"><span>Pista</span><strong id="kpi-sem">—</strong></div>
         <div class="kpi"><span>Comissões</span><strong id="kpi-comissao">—</strong><small id="kpi-pct"></small></div>
       </div>
 
-      <div class="grade-relatorio">
-        <div class="cartao"><h2>🏆 Vendedores e pagamento</h2><div id="rel-vendedores" class="tabela-wrap"></div></div>
+      <div class="cartao"><h2>🏆 Vendedores e pagamento <span id="rel-pagos" class="dica"></span></h2><div id="rel-vendedores" class="tabela-wrap"></div></div>
+      <div class="grade-relatorio grade-relatorio-3">
         <div class="cartao"><h2>🤝 Parcerias</h2><div id="rel-parcerias" class="tabela-wrap"></div></div>
         <div class="cartao"><h2>📦 Produtos</h2><div id="rel-produtos" class="tabela-wrap"></div></div>
         <div class="cartao"><h2>🔧 Craft usado</h2><div id="rel-craft" class="tabela-wrap"></div></div>
@@ -193,9 +192,28 @@
   </form>
 </div>
 
+<div id="modal-pagamento" class="modal-fundo" hidden>
+  <form id="form-pagamento" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="pagamento-titulo">
+    <h2 id="pagamento-titulo">💸 Pagar vendedor</h2>
+    <p class="modal-texto"><strong id="pagamento-vendedor">—</strong><br><span id="pagamento-semana" class="dica"></span></p>
+    <div class="pagamento-valor">
+      <span class="dica">Valor a pagar</span>
+      <strong id="pagamento-valor">—</strong>
+      <span id="pagamento-ja-pago" class="dica"></span>
+    </div>
+    <button id="pagamento-copiar" type="button" class="botao botao-bloco">📋 Copiar valor</button>
+    <label class="rotulo" for="pagamento-observacao">Observação <span class="opcional">(opcional)</span></label>
+    <input id="pagamento-observacao" type="text" maxlength="300" autocomplete="off" placeholder="Ex.: pago em mãos">
+    <p class="dica">Ao registrar, o pagamento fica salvo e o aviso vai para o canal de relatórios do Discord.</p>
+    <p id="pagamento-erro" class="status erro" hidden></p>
+    <button id="pagamento-registrar" type="submit" class="botao-primario botao-bloco">✅ Registrar pagamento</button>
+    <button id="pagamento-cancelar" type="button" class="botao-secundario botao-bloco">Cancelar</button>
+  </form>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=4"></script>
-<script src="js/admin.js?v=5"></script>
+<script src="js/admin.js?v=6"></script>
 </body>
 </html>

@@ -143,7 +143,7 @@
       <thead><tr><th>Nome</th><th class="num">Qtd.</th><th class="num">Total</th></tr></thead>
       <tbody>${lista.map((x) => `
         <tr>
-          <td>${comIcone && x.icone ? esc(x.icone) + ' ' : ''}${esc(x.nome)}
+          <td>${comIcone ? `<span class="rel-produto"><span class="produto-tabela-icone">${BD.iconeProduto(x, 'produto-img-pequena')}</span>${esc(x.nome)}</span>` : esc(x.nome)}
             <div class="barra-progresso"><span style="width:${(Number(x.total) / maior) * 100}%"></span></div></td>
           <td class="num">${Number(x.quantidade).toLocaleString('pt-BR')}</td>
           <td class="num">${formatarValor(x.total)}</td>
@@ -171,7 +171,6 @@
     const total = Number(r.total);
     $('kpi-total').textContent = formatarValor(total);
     $('kpi-quantidade').textContent = r.quantidade;
-    $('kpi-ticket').textContent = formatarValor(r.quantidade ? total / r.quantidade : 0);
     $('kpi-com').textContent = formatarValor(r.total_com_parceria);
     $('kpi-sem').textContent = formatarValor(r.total_sem_parceria);
 
@@ -188,16 +187,7 @@
     $('kpi-comissao').textContent = formatarValor(r.comissao);
     $('kpi-pct').textContent = `${pct}% por vendedor`;
 
-    $('rel-vendedores').innerHTML = r.por_vendedor.length
-      ? `<table>
-          <thead><tr><th>Vendedor</th><th class="num">Vendas</th><th class="num">Total</th><th class="num">Pagamento</th></tr></thead>
-          <tbody>${r.por_vendedor.map((x) => `
-            <tr><td>${esc(x.nome)}</td><td class="num">${x.quantidade}</td>
-              <td class="num">${formatarValor(x.total)}</td><td class="num"><strong>${formatarValor(x.comissao)}</strong></td></tr>`).join('')}
-          </tbody>
-          <tfoot><tr><th>Total</th><th class="num">${r.quantidade}</th><th class="num">${formatarValor(r.total)}</th><th class="num">${formatarValor(r.comissao)}</th></tr></tfoot>
-        </table>`
-      : '<p class="vazio">Sem vendas no período.</p>';
+    renderizarPagamentos(r);
     $('rel-parcerias').innerHTML = tabelaRanking(r.por_parceria);
     $('rel-produtos').innerHTML = tabelaRanking(r.por_produto, true);
     $('rel-craft').innerHTML = (r.craft || []).length
@@ -205,6 +195,111 @@
           <tbody>${r.craft.map((x) => `<tr><td>${esc(x.nome)}</td><td class="num"><strong>${Number(x.quantidade).toLocaleString('pt-BR')}</strong></td></tr>`).join('')}</tbody></table>`
       : '<p class="vazio">Nenhum material usado no período.</p>';
   }
+
+  function dataHoraBR(iso) {
+    return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function situacaoPagamento(x) {
+    const comissao = Number(x.comissao) || 0;
+    const pago = Number(x.pago) || 0;
+    const pendente = Number(x.pendente) || 0;
+    if (comissao <= 0) return { html: '<span class="etiqueta sem-valor">Sem comissão</span>', pendente: 0 };
+    const info = x.pago_em ? `<span class="pagamento-info">${esc(dataHoraBR(x.pago_em))}${x.pago_por ? ' · ' + esc(x.pago_por) : ''}</span>` : '';
+    if (pendente <= 0) return { html: `<span class="etiqueta pago">✅ Pago</span>${info}`, pendente: 0 };
+    if (pago > 0) {
+      return { html: `<span class="etiqueta pendente">⏳ Falta ${esc(formatarValor(pendente))}</span><span class="pagamento-info">Já pago ${esc(formatarValor(pago))}</span>`, pendente };
+    }
+    return { html: '<span class="etiqueta pendente">⏳ Pendente</span>', pendente };
+  }
+
+  function renderizarPagamentos(r) {
+    const lista = r.por_vendedor || [];
+    if (!lista.length) {
+      $('rel-pagos').textContent = '';
+      $('rel-vendedores').innerHTML = '<p class="vazio">Sem vendas no período.</p>';
+      return;
+    }
+    const pagos = lista.filter((x) => Number(x.comissao) > 0 && Number(x.pendente) <= 0).length;
+    const comComissao = lista.filter((x) => Number(x.comissao) > 0).length;
+    const totalPendente = lista.reduce((s, x) => s + (Number(x.pendente) || 0), 0);
+    $('rel-pagos').textContent = `${pagos} de ${comComissao} pago${comComissao === 1 ? '' : 's'}`
+      + (totalPendente > 0 ? ` · falta pagar ${formatarValor(totalPendente)}` : '');
+
+    $('rel-vendedores').innerHTML = `<table class="tabela-pagamentos">
+      <thead><tr><th>Vendedor</th><th class="num">Vendas</th><th class="num">Total vendido</th><th class="num">Pagamento</th><th>Situação</th><th class="acao"></th></tr></thead>
+      <tbody>${lista.map((x, i) => {
+        const s = situacaoPagamento(x);
+        return `<tr>
+          <td><strong>${esc(x.nome)}</strong></td>
+          <td class="num">${x.quantidade}</td>
+          <td class="num">${formatarValor(x.total)}</td>
+          <td class="num"><strong>${formatarValor(x.comissao)}</strong></td>
+          <td>${s.html}</td>
+          <td class="acao">${s.pendente > 0 && x.vendedor_id ? `<button type="button" class="botao-sucesso botao-pequeno" data-pagar="${i}">💸 Pagar</button>` : ''}</td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+      <tfoot><tr><th>Total</th><th class="num">${r.quantidade}</th><th class="num">${formatarValor(r.total)}</th><th class="num">${formatarValor(r.comissao)}</th><th colspan="2"></th></tr></tfoot>
+    </table>`;
+  }
+
+  // ---------------------------------------------------------------- pagamento
+
+  let pagamentoAtual = null;
+
+  $('rel-vendedores').addEventListener('click', (e) => {
+    const botao = e.target.closest('[data-pagar]');
+    if (!botao || !relatorioAtual) return;
+    const x = relatorioAtual.por_vendedor[Number(botao.dataset.pagar)];
+    if (!x) return;
+    pagamentoAtual = { vendedor_id: x.vendedor_id, semana: relatorioAtual.inicio, valor: Number(x.pendente) };
+    $('pagamento-vendedor').textContent = x.nome;
+    $('pagamento-semana').textContent = `Semana de ${BD.dataBR(relatorioAtual.inicio)} a ${BD.dataBR(relatorioAtual.fim)}`;
+    $('pagamento-valor').textContent = formatarValor(x.pendente);
+    $('pagamento-ja-pago').textContent = Number(x.pago) > 0
+      ? `Comissão ${formatarValor(x.comissao)} · já pago ${formatarValor(x.pago)}` : `${x.quantidade} venda${x.quantidade === 1 ? '' : 's'} · ${formatarValor(x.total)} vendido`;
+    $('pagamento-copiar').textContent = '📋 Copiar valor';
+    $('pagamento-copiar').classList.remove('copiado');
+    $('pagamento-observacao').value = '';
+    $('pagamento-erro').hidden = true;
+    $('pagamento-registrar').disabled = false;
+    BD.abrirModal($('modal-pagamento'), $('pagamento-copiar'));
+  });
+
+  $('pagamento-copiar').addEventListener('click', () => {
+    if (!pagamentoAtual) return;
+    BD.copiar(String(Math.round(pagamentoAtual.valor)))
+      .then(() => { $('pagamento-copiar').textContent = '✅ Valor copiado!'; $('pagamento-copiar').classList.add('copiado'); })
+      .catch(() => { $('pagamento-copiar').textContent = 'Não consegui copiar — anote o valor acima'; });
+  });
+
+  $('form-pagamento').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!pagamentoAtual) return;
+    const botao = $('pagamento-registrar');
+    botao.disabled = true;
+    $('pagamento-erro').hidden = true;
+    const { data, error } = await db.rpc('registrar_pagamento', {
+      p_vendedor_id: pagamentoAtual.vendedor_id,
+      p_semana_inicio: pagamentoAtual.semana,
+      p_observacao: $('pagamento-observacao').value.trim() || null,
+    });
+    if (error) {
+      botao.disabled = false;
+      $('pagamento-erro').textContent = BD.mensagemErro(error);
+      $('pagamento-erro').hidden = false;
+      carregarRelatorio(); // o valor pode ter mudado (outro admin pagou, venda cancelada…)
+      return;
+    }
+    BD.fecharModal($('modal-pagamento'));
+    pagamentoAtual = null;
+    BD.toast(`💸 Pagamento de ${formatarValor(data.valor)} registrado${data.notificado ? ' e avisado no Discord' : ''}.`, 'ok');
+    carregarRelatorio();
+  });
+
+  $('pagamento-cancelar').addEventListener('click', () => BD.fecharModal($('modal-pagamento')));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal-pagamento').hidden) BD.fecharModal($('modal-pagamento')); });
 
   $('semana-anterior').addEventListener('click', () => { semanaInicio = BD.somarDias(semanaInicio, -7); carregarRelatorio(); });
   $('semana-proxima').addEventListener('click', () => { semanaInicio = BD.somarDias(semanaInicio, 7); carregarRelatorio(); });
@@ -225,7 +320,9 @@
       [`Relatório semanal ${BD.dataBR(r.inicio)} a ${BD.dataBR(r.fim)}`],
       ['Total vendido', r.total], ['Vendas', r.quantidade],
       ['Com parceria', r.total_com_parceria], ['Pista', r.total_sem_parceria], ['Comissões', r.comissao], [],
-      ['Vendedor', 'Vendas', 'Total', 'Pagamento'], ...r.por_vendedor.map((x) => [x.nome, x.quantidade, x.total, x.comissao]), [],
+      ['Vendedor', 'Vendas', 'Total', 'Pagamento', 'Já pago', 'Situação'],
+      ...r.por_vendedor.map((x) => [x.nome, x.quantidade, x.total, x.comissao, x.pago || 0,
+        Number(x.comissao) <= 0 ? 'Sem comissão' : Number(x.pendente) <= 0 ? 'Pago' : 'Pendente']), [],
       ['Parceria', 'Vendas', 'Total'], ...r.por_parceria.map((x) => [x.nome, x.quantidade, x.total]), [],
       ['Produto', 'Quantidade', 'Total', 'Placas', 'Material'], ...r.por_produto.map((x) => [x.nome, x.quantidade, x.total, x.craft_placa, `${x.craft_material} ${x.material_nome || ''}`]), [],
       ['Craft', 'Quantidade'], ...(r.craft || []).map((x) => [x.nome, x.quantidade]),
