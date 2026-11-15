@@ -162,6 +162,35 @@ create table if not exists public.discord_cargos (
   atualizado_em timestamptz not null default now()
 );
 
+-- Cadastro completo das parcerias.
+alter table public.parcerias add column if not exists produtos uuid[] not null default '{}';  -- produtos do catálogo que a parceria compra
+alter table public.parcerias add column if not exists localizacao text check (localizacao is null or length(localizacao) <= 200);
+alter table public.parcerias add column if not exists img_localizacao text;  -- caminhos no Storage (bucket "parcerias")
+alter table public.parcerias add column if not exists img_banner text;
+alter table public.parcerias add column if not exists img_cores text;        -- cores da organização: carro / uniforme (opcional)
+alter table public.parcerias add column if not exists feita_por_id uuid references public.vendedores (id) on delete set null;
+alter table public.parcerias add column if not exists feita_por_nome text;
+alter table public.parcerias add column if not exists encerrada_em timestamptz;
+alter table public.parcerias add column if not exists encerrada_motivo text;
+alter table public.parcerias add column if not exists encerrada_por text;
+
+-- Histórico de cada parceria (criação, edições, encerramento, reativação).
+create table if not exists public.parceria_historico (
+  id bigint generated always as identity primary key,
+  parceria_id uuid not null references public.parcerias (id) on delete cascade,
+  tipo text not null check (tipo in ('criada', 'editada', 'encerrada', 'reativada')),
+  descricao text,
+  autor text,
+  criado_em timestamptz not null default now()
+);
+create index if not exists parceria_historico_idx on public.parceria_historico (parceria_id, criado_em);
+
+-- Imagens das parcerias: bucket privado, só administradores leem e enviam.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('parcerias', 'parcerias', false, 5242880, array['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
 -- Pagamentos das comissões semanais aos vendedores.
 -- Pode haver mais de um por semana (ex.: uma venda entrou depois do pagamento
 -- e a diferença foi paga em seguida).
@@ -259,8 +288,35 @@ revoke all on public.admins, public.produtos, public.parcerias, public.vendedore
   from anon, authenticated;
 
 -- Produtos e parcerias: leitura pública dos ativos; admin gerencia tudo.
-grant select on public.produtos, public.parcerias to anon, authenticated;
-grant insert, update, delete on public.produtos, public.parcerias to authenticated;
+-- Visitantes só veem nome/status das parcerias (o resto do cadastro é interno).
+grant select on public.produtos to anon, authenticated;
+grant select (id, nome, ativo) on public.parcerias to anon;
+grant select on public.parcerias to authenticated;
+grant insert, update, delete on public.produtos to authenticated;
+-- Ativar/encerrar só pelas funções encerrar_parceria / reativar_parceria (que exigem motivo e registram histórico).
+grant insert (nome, responsavel, observacoes, produtos, localizacao, img_localizacao, img_banner, img_cores, feita_por_id, feita_por_nome),
+  update (nome, responsavel, observacoes, produtos, localizacao, img_localizacao, img_banner, img_cores, feita_por_id, feita_por_nome),
+  delete on public.parcerias to authenticated;
+
+alter table public.parceria_historico enable row level security;
+revoke all on public.parceria_historico from anon, authenticated;
+grant select on public.parceria_historico to authenticated;
+drop policy if exists parceria_historico_admin on public.parceria_historico;
+create policy parceria_historico_admin on public.parceria_historico for select to authenticated
+  using (public.is_admin());
+
+drop policy if exists parcerias_imagens_ler on storage.objects;
+create policy parcerias_imagens_ler on storage.objects for select to authenticated
+  using (bucket_id = 'parcerias' and public.is_admin());
+drop policy if exists parcerias_imagens_enviar on storage.objects;
+create policy parcerias_imagens_enviar on storage.objects for insert to authenticated
+  with check (bucket_id = 'parcerias' and public.is_admin());
+drop policy if exists parcerias_imagens_alterar on storage.objects;
+create policy parcerias_imagens_alterar on storage.objects for update to authenticated
+  using (bucket_id = 'parcerias' and public.is_admin()) with check (bucket_id = 'parcerias' and public.is_admin());
+drop policy if exists parcerias_imagens_apagar on storage.objects;
+create policy parcerias_imagens_apagar on storage.objects for delete to authenticated
+  using (bucket_id = 'parcerias' and public.is_admin());
 
 drop policy if exists produtos_leitura on public.produtos;
 create policy produtos_leitura on public.produtos for select
@@ -651,6 +707,164 @@ begin
     end if;
   end if;
   return v_id;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Parcerias: histórico, encerramento com motivo e perfil
+-- -----------------------------------------------------------------------------
+
+-- Nome de quem está logado (para o histórico).
+create or replace function public._nome_logado()
+returns text
+language sql stable security definer
+set search_path = public
+as $$
+  select coalesce((select coalesce(v.nome_discord, v.nome) from public.vendedores v
+                   where v.discord_id = public._discord_id() limit 1), 'Administrador');
+$$;
+
+-- Valida o cadastro e registra criação/edição no histórico.
+create or replace function public._parceria_antes()
+returns trigger
+language plpgsql security definer
+set search_path = public
+as $$
+begin
+  new.nome := btrim(new.nome);
+  new.responsavel := nullif(btrim(coalesce(new.responsavel, '')), '');
+  new.observacoes := nullif(btrim(coalesce(new.observacoes, '')), '');
+  new.localizacao := nullif(btrim(coalesce(new.localizacao, '')), '');
+  if length(coalesce(new.observacoes, '')) > 500 then
+    raise exception 'As observações podem ter no máximo 500 caracteres.';
+  end if;
+  -- Imagens: só caminhos dentro da pasta da própria parceria no bucket.
+  if (new.img_localizacao is not null and new.img_localizacao !~ ('^' || new.id::text || '/[a-z0-9_.-]{1,80}$'))
+     or (new.img_banner is not null and new.img_banner !~ ('^' || new.id::text || '/[a-z0-9_.-]{1,80}$'))
+     or (new.img_cores is not null and new.img_cores !~ ('^' || new.id::text || '/[a-z0-9_.-]{1,80}$')) then
+    raise exception 'Imagem inválida.';
+  end if;
+  -- Produtos: só os que existem no catálogo, sem repetição.
+  new.produtos := coalesce((select array_agg(distinct p.id) from public.produtos p where p.id = any (new.produtos)), '{}');
+  if new.feita_por_id is not null then
+    select coalesce(nome_discord, nome) into new.feita_por_nome from public.vendedores where id = new.feita_por_id;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public._parceria_depois()
+returns trigger
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  v_mudou text[] := '{}';
+begin
+  if tg_op = 'INSERT' then
+    insert into public.parceria_historico (parceria_id, tipo, descricao, autor)
+    values (new.id, 'criada', 'Parceria cadastrada' || coalesce(' por ' || new.feita_por_nome, '') || '.', public._nome_logado());
+    return new;
+  end if;
+  if new.nome is distinct from old.nome then v_mudou := v_mudou || ('nome: ' || old.nome || ' → ' || new.nome); end if;
+  if new.responsavel is distinct from old.responsavel then v_mudou := v_mudou || 'responsável'::text; end if;
+  if new.observacoes is distinct from old.observacoes then v_mudou := v_mudou || 'observações'::text; end if;
+  if new.produtos is distinct from old.produtos then v_mudou := v_mudou || 'produtos'::text; end if;
+  if new.localizacao is distinct from old.localizacao then v_mudou := v_mudou || 'localização'::text; end if;
+  if new.img_localizacao is distinct from old.img_localizacao then v_mudou := v_mudou || 'imagem da localização'::text; end if;
+  if new.img_banner is distinct from old.img_banner then v_mudou := v_mudou || 'banner'::text; end if;
+  if new.img_cores is distinct from old.img_cores then v_mudou := v_mudou || 'cores da organização'::text; end if;
+  if new.feita_por_id is distinct from old.feita_por_id then v_mudou := v_mudou || ('feita por: ' || coalesce(new.feita_por_nome, '—')); end if;
+  if array_length(v_mudou, 1) > 0 then
+    insert into public.parceria_historico (parceria_id, tipo, descricao, autor)
+    values (new.id, 'editada', 'Alterado: ' || array_to_string(v_mudou, ', ') || '.', public._nome_logado());
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists parceria_antes on public.parcerias;
+create trigger parceria_antes before insert or update on public.parcerias
+  for each row execute function public._parceria_antes();
+drop trigger if exists parceria_depois on public.parcerias;
+create trigger parceria_depois after insert or update on public.parcerias
+  for each row execute function public._parceria_depois();
+
+-- Encerrar exige um motivo, que fica no cadastro e no histórico.
+create or replace function public.encerrar_parceria(p_id uuid, p_motivo text)
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_motivo text := btrim(coalesce(p_motivo, ''));
+  v_quem text := public._nome_logado();
+begin
+  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  if length(v_motivo) < 3 then raise exception 'Informe o motivo do encerramento.'; end if;
+  if length(v_motivo) > 500 then raise exception 'O motivo pode ter no máximo 500 caracteres.'; end if;
+  update public.parcerias set ativo = false, encerrada_em = now(), encerrada_motivo = v_motivo, encerrada_por = v_quem
+  where id = p_id and ativo;
+  if not found then raise exception 'Parceria não encontrada ou já encerrada.'; end if;
+  insert into public.parceria_historico (parceria_id, tipo, descricao, autor)
+  values (p_id, 'encerrada', 'Motivo: ' || v_motivo, v_quem);
+end;
+$$;
+
+create or replace function public.reativar_parceria(p_id uuid)
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  update public.parcerias set ativo = true, encerrada_em = null, encerrada_motivo = null, encerrada_por = null
+  where id = p_id and not ativo;
+  if not found then raise exception 'Parceria não encontrada ou já ativa.'; end if;
+  insert into public.parceria_historico (parceria_id, tipo, descricao, autor)
+  values (p_id, 'reativada', 'Parceria reativada.', public._nome_logado());
+end;
+$$;
+
+-- Tudo para a tela de perfil: números de vendas, últimas vendas, produtos e histórico.
+create or replace function public.perfil_parceria(p_id uuid)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  r jsonb;
+begin
+  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  if not exists (select 1 from public.parcerias where id = p_id) then raise exception 'Parceria não encontrada.'; end if;
+  select jsonb_build_object(
+    'total', coalesce(sum(v.total), 0),
+    'quantidade', count(*),
+    'primeira_venda', min(v.criado_em),
+    'ultima_venda', max(v.criado_em)
+  ) into r
+  from public.vendas v where v.parceria_id = p_id and not v.cancelada;
+
+  r := r || jsonb_build_object(
+    'por_produto', coalesce((
+      select jsonb_agg(x order by x.total desc) from (
+        select i.produto_nome as nome, max(i.icone) as icone, max(pr.imagem) as imagem,
+               sum(i.quantidade) as quantidade, sum(i.subtotal) as total
+        from public.venda_itens i join public.vendas v on v.id = i.venda_id
+        left join public.produtos pr on pr.id = i.produto_id
+        where v.parceria_id = p_id and not v.cancelada
+        group by i.produto_nome) x), '[]'::jsonb),
+    'vendas', coalesce((
+      select jsonb_agg(x order by x.criado_em desc) from (
+        select v.numero, v.criado_em, v.vendedor_nome, v.total, v.cancelada,
+               (select string_agg(i.produto_nome || ' x' || i.quantidade, ', ' order by i.id) from public.venda_itens i where i.venda_id = v.id) as itens
+        from public.vendas v where v.parceria_id = p_id
+        order by v.criado_em desc limit 30) x), '[]'::jsonb),
+    'historico', coalesce((
+      select jsonb_agg(jsonb_build_object('tipo', h.tipo, 'descricao', h.descricao, 'autor', h.autor, 'criado_em', h.criado_em) order by h.criado_em desc, h.id desc)
+      from public.parceria_historico h where h.parceria_id = p_id), '[]'::jsonb)
+  );
+  return r;
 end;
 $$;
 
@@ -1187,6 +1401,9 @@ grant execute on function public.salvar_vendedor(uuid, text, text, boolean, bool
 grant execute on function public.relatorio_periodo(date, date) to authenticated;
 grant execute on function public.enviar_relatorio_discord(date) to authenticated;
 grant execute on function public.registrar_pagamento(uuid, date, text) to authenticated;
+grant execute on function public.encerrar_parceria(uuid, text) to authenticated;
+grant execute on function public.reativar_parceria(uuid) to authenticated;
+grant execute on function public.perfil_parceria(uuid) to authenticated;
 grant execute on function public.testar_webhook(text) to authenticated;
 grant execute on function public.salvar_token_bot(text) to authenticated;
 grant execute on function public.discord_status() to authenticated;

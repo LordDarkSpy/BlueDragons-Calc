@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=12">
+<link rel="stylesheet" href="css/style.css?v=13">
 </head>
 <body>
 
@@ -117,6 +117,11 @@
     <section id="aba-parcerias" class="painel" role="tabpanel" hidden>
       <div class="cartao">
         <h2>Parcerias <button type="button" class="botao-primario botao-pequeno" data-novo="parceria">+ Nova parceria</button></h2>
+        <div class="grade-form filtros-parcerias">
+          <div><label class="rotulo" for="parcerias-busca">Pesquisar</label><input id="parcerias-busca" type="search" placeholder="Nome, responsável ou produto…" autocomplete="off"></div>
+          <div><label class="rotulo" for="parcerias-produto">Produto vendido</label><select id="parcerias-produto"><option value="">Todos os produtos</option></select></div>
+          <div><label class="rotulo" for="parcerias-status">Status</label><select id="parcerias-status"><option value="">Todas</option><option value="ativa">Ativas</option><option value="encerrada">Encerradas</option></select></div>
+        </div>
         <div id="parcerias-tabela" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
       </div>
     </section>
@@ -191,6 +196,68 @@
   </form>
 </div>
 
+<!-- Cadastro de parceria -->
+<div id="modal-parceria" class="modal-fundo" hidden>
+  <form id="form-parceria" class="modal modal-largo cartao" role="dialog" aria-modal="true" aria-labelledby="parceria-titulo" novalidate>
+    <h2 id="parceria-titulo">Nova parceria</h2>
+    <div class="grade-form">
+      <div class="largura-total"><label class="rotulo" for="parceria-nome">Nome da parceria <span class="obrigatorio">*</span></label>
+        <input id="parceria-nome" type="text" maxlength="60" autocomplete="off"></div>
+      <div><label class="rotulo" for="parceria-responsavel">Responsável / contato</label>
+        <input id="parceria-responsavel" type="text" maxlength="60" autocomplete="off"></div>
+      <div><label class="rotulo" for="parceria-feita-por">Quem fez a parceria</label>
+        <select id="parceria-feita-por"></select></div>
+      <div class="largura-total">
+        <span class="rotulo">Produtos vendidos para a parceria</span>
+        <div id="parceria-produtos" class="lista-produtos-escolha"></div>
+      </div>
+      <div class="largura-total"><label class="rotulo" for="parceria-localizacao">Localização <span class="opcional">(descrição)</span></label>
+        <input id="parceria-localizacao" type="text" maxlength="200" autocomplete="off" placeholder="Ex.: galpão atrás do posto, Sandy Shores"></div>
+      <div class="largura-total campos-imagem">
+        <div class="campo-imagem" data-campo="img_localizacao"><span class="rotulo">Imagem da localização</span></div>
+        <div class="campo-imagem" data-campo="img_banner"><span class="rotulo">Banner</span></div>
+        <div class="campo-imagem" data-campo="img_cores"><span class="rotulo">Cores da organização <span class="opcional">(carro / uniforme, opcional)</span></span></div>
+      </div>
+      <div class="largura-total"><label class="rotulo" for="parceria-observacoes">Observações</label>
+        <textarea id="parceria-observacoes" maxlength="500" rows="3"></textarea></div>
+    </div>
+    <p class="dica">Imagens PNG, JPG, WEBP ou GIF de até 5 MB. Só administradores conseguem vê-las.</p>
+    <p id="parceria-erro" class="status erro" hidden></p>
+    <button id="parceria-salvar" type="submit" class="botao-primario botao-bloco">💾 Salvar</button>
+    <button id="parceria-cancelar" type="button" class="botao-secundario botao-bloco">Cancelar</button>
+  </form>
+</div>
+
+<!-- Perfil da parceria -->
+<div id="modal-perfil" class="modal-fundo" hidden>
+  <div class="modal modal-perfil cartao" role="dialog" aria-modal="true" aria-labelledby="perfil-nome">
+    <button id="perfil-fechar" type="button" class="perfil-fechar" aria-label="Fechar">✕</button>
+    <div id="perfil-conteudo"><p class="carregando">Carregando…</p></div>
+  </div>
+</div>
+
+<!-- Encerrar parceria -->
+<div id="modal-encerrar" class="modal-fundo" hidden>
+  <form id="form-encerrar" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="encerrar-titulo" novalidate>
+    <h2 id="encerrar-titulo">Encerrar parceria</h2>
+    <p class="modal-texto">Encerrar <strong id="encerrar-nome"></strong>? Ela some da calculadora, mas o cadastro e o histórico continuam guardados.</p>
+    <label class="rotulo" for="encerrar-motivo">Motivo do encerramento <span class="obrigatorio">*</span></label>
+    <textarea id="encerrar-motivo" maxlength="500" rows="3" placeholder="Ex.: deixou de comprar, quebrou o acordo…"></textarea>
+    <p id="encerrar-erro" class="status erro" hidden></p>
+    <button id="encerrar-confirmar" type="submit" class="botao-perigo botao-bloco">Encerrar parceria</button>
+    <button id="encerrar-cancelar" type="button" class="botao-secundario botao-bloco">Cancelar</button>
+  </form>
+</div>
+
+<!-- Ver imagem em tamanho grande -->
+<div id="modal-imagem" class="modal-fundo modal-imagem" hidden>
+  <figure class="visualizador" role="dialog" aria-modal="true" aria-labelledby="imagem-titulo">
+    <figcaption id="imagem-titulo"></figcaption>
+    <img id="imagem-grande" alt="">
+    <button id="imagem-fechar" type="button" class="botao botao-bloco">Fechar</button>
+  </figure>
+</div>
+
 <div id="modal-pagamento" class="modal-fundo" hidden>
   <form id="form-pagamento" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="pagamento-titulo">
     <h2 id="pagamento-titulo">💸 Pagar vendedor</h2>
@@ -213,6 +280,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=6"></script>
-<script src="js/admin.js?v=6"></script>
+<script src="js/admin.js?v=7"></script>
 </body>
 </html>

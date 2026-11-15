@@ -579,60 +579,369 @@
 
   // ================================================================ parcerias
 
+  const IMAGENS_PARCERIA = {
+    img_localizacao: { arquivo: 'localizacao', titulo: 'Localização' },
+    img_banner: { arquivo: 'banner', titulo: 'Banner' },
+    img_cores: { arquivo: 'cores', titulo: 'Cores da organização (carro / uniforme)' },
+  };
+  const TIPOS_IMAGEM = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+  const urlsAssinadas = {}; // caminho no Storage -> { url, expira }
+
+  // Links temporários (1 h) para as imagens do bucket privado.
+  async function urlsImagens(caminhos) {
+    const agora = Date.now();
+    const faltam = [...new Set(caminhos.filter(Boolean))].filter((c) => !urlsAssinadas[c] || urlsAssinadas[c].expira < agora);
+    if (faltam.length) {
+      const { data } = await db.storage.from('parcerias').createSignedUrls(faltam, 3600);
+      (data || []).forEach((x) => { if (x.signedUrl && !x.error) urlsAssinadas[x.path] = { url: x.signedUrl, expira: agora + 50 * 60 * 1000 }; });
+    }
+    return (c) => (c && urlsAssinadas[c] ? urlsAssinadas[c].url : '');
+  }
+
+  function produtoPorId(id) { return cache.produtos.find((p) => p.id === id); }
+
+  function chipsProdutos(ids) {
+    const lista = (ids || []).map(produtoPorId).filter(Boolean);
+    if (!lista.length) return '<span class="dica">—</span>';
+    return `<div class="chips">${lista.map((p) => `<span class="chip">${BD.iconeProduto(p, 'chip-img')} ${esc(p.nome)}</span>`).join('')}</div>`;
+  }
+
+  const semAcento = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+  function parceriasFiltradas() {
+    const busca = semAcento($('parcerias-busca').value.trim());
+    const produto = $('parcerias-produto').value;
+    const status = $('parcerias-status').value;
+    return cache.parcerias.filter((p) => {
+      if (status === 'ativa' && !p.ativo) return false;
+      if (status === 'encerrada' && p.ativo) return false;
+      if (produto && !(p.produtos || []).includes(produto)) return false;
+      if (!busca) return true;
+      const nomesProdutos = (p.produtos || []).map((id) => (produtoPorId(id) || {}).nome).join(' ');
+      return semAcento(`${p.nome} ${p.responsavel || ''} ${p.feita_por_nome || ''} ${nomesProdutos}`).includes(busca);
+    });
+  }
+
+  let semanaParcerias = {};
+
   async function carregarParcerias() {
     const container = $('parcerias-tabela');
     await carregarListasBase();
+    const filtroProduto = $('parcerias-produto');
+    const escolhido = filtroProduto.value;
+    filtroProduto.innerHTML = '<option value="">Todos os produtos</option>'
+      + cache.produtos.map((p) => `<option value="${esc(p.id)}">${esc(p.nome)}</option>`).join('');
+    filtroProduto.value = escolhido;
+    // Total vendido por parceria na semana atual.
+    const ini = BD.inicioSemana(new Date());
+    const { data: rel } = await db.rpc('relatorio_periodo', { p_inicio: BD.dataISO(ini), p_fim: BD.dataISO(BD.somarDias(ini, 6)) });
+    semanaParcerias = Object.fromEntries(((rel && rel.por_parceria) || []).map((x) => [x.nome, x]));
+    await renderizarParcerias();
+  }
+
+  async function renderizarParcerias() {
+    const container = $('parcerias-tabela');
     if (!cache.parcerias.length) {
       container.innerHTML = '<p class="vazio">Nenhuma parceria cadastrada. Clique em "+ Nova parceria".</p>';
       return;
     }
-    // Total vendido por parceria na semana atual.
-    const ini = BD.inicioSemana(new Date());
-    const { data: rel } = await db.rpc('relatorio_periodo', { p_inicio: BD.dataISO(ini), p_fim: BD.dataISO(BD.somarDias(ini, 6)) });
-    const porNome = Object.fromEntries(((rel && rel.por_parceria) || []).map((x) => [x.nome, x]));
-
-    container.innerHTML = `<table>
-      <thead><tr><th>Parceria</th><th>Responsável</th><th>Observações</th><th class="num">Semana</th><th>Status</th><th></th></tr></thead>
-      <tbody>${cache.parcerias.map((p) => `
-        <tr>
-          <td><strong>${esc(p.nome)}</strong></td>
-          <td>${esc(p.responsavel || '—')}</td>
-          <td class="dica">${esc(p.observacoes || '')}</td>
-          <td class="num">${porNome[p.nome] ? `${formatarValor(porNome[p.nome].total)}<div class="dica">${porNome[p.nome].quantidade} venda(s)</div>` : '—'}</td>
-          <td>${etiquetaAtivo(p.ativo)}</td>
-          <td class="acoes">
-            <button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">Editar</button>
-            <button type="button" class="botao-perigo botao-pequeno" data-excluir-parceria="${esc(p.id)}">Excluir</button>
+    const lista = parceriasFiltradas();
+    if (!lista.length) {
+      container.innerHTML = '<p class="vazio">Nenhuma parceria encontrada com esse filtro.</p>';
+      return;
+    }
+    const url = await urlsImagens(lista.map((p) => p.img_banner));
+    container.innerHTML = `<table class="tabela-parcerias">
+      <thead><tr><th>Parceria</th><th>Produtos</th><th>Feita por</th><th class="num">Semana</th><th>Status</th><th></th></tr></thead>
+      <tbody>${lista.map((p) => {
+        const sem = semanaParcerias[p.nome];
+        return `<tr class="${p.ativo ? '' : 'encerrada'}">
+          <td>
+            <div class="parceria-nome">
+              ${p.img_banner && url(p.img_banner) ? `<img class="parceria-miniatura" src="${esc(url(p.img_banner))}" alt="">` : '<span class="parceria-miniatura vazia" aria-hidden="true">🤝</span>'}
+              <div><strong>${esc(p.nome)}</strong>${p.responsavel ? `<div class="dica">${esc(p.responsavel)}</div>` : ''}</div>
+            </div>
           </td>
-        </tr>`).join('')}
+          <td>${chipsProdutos(p.produtos)}</td>
+          <td>${esc(p.feita_por_nome || '—')}</td>
+          <td class="num">${sem ? `${formatarValor(sem.total)}<div class="dica">${sem.quantidade} venda(s)</div>` : '—'}</td>
+          <td>${p.ativo ? '<span class="etiqueta ativo">Ativa</span>' : `<span class="etiqueta inativo">Encerrada</span>${p.encerrada_em ? `<div class="dica">${esc(BD.dataBR(p.encerrada_em))}</div>` : ''}`}</td>
+          <td class="acoes">
+            <button type="button" class="botao-primario botao-pequeno" data-ver-parceria="${esc(p.id)}">👁️ Visualizar</button>
+            <button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">Editar</button>
+            ${p.ativo
+              ? `<button type="button" class="botao-perigo botao-pequeno" data-encerrar-parceria="${esc(p.id)}">Encerrar</button>`
+              : `<button type="button" class="botao botao-pequeno" data-reativar-parceria="${esc(p.id)}">Reativar</button>`}
+          </td>
+        </tr>`;
+      }).join('')}
       </tbody></table>`;
   }
 
-  function editarParceria(p) {
-    const novo = !p;
-    p = p || { ativo: true };
-    abrirEdicao(novo ? 'Nova parceria' : `Editar ${p.nome}`, [
-      { nome: 'nome', rotulo: 'Nome da parceria', valor: p.nome, obrigatorio: true, max: 60, largo: true },
-      { nome: 'responsavel', rotulo: 'Responsável / contato', valor: p.responsavel, max: 60, largo: true },
-      { nome: 'observacoes', rotulo: 'Observações', tipo: 'textarea', valor: p.observacoes, max: 300, largo: true },
-      { nome: 'ativo', rotulo: 'Ativa (aparece na calculadora)', tipo: 'checkbox', valor: p.ativo },
-    ], async (val) => {
-      const dados = { nome: val.nome, responsavel: val.responsavel || null, observacoes: val.observacoes || null, ativo: val.ativo };
-      falhou(novo ? await db.from('parcerias').insert(dados) : await db.from('parcerias').update(dados).eq('id', p.id));
-      carregarParcerias();
-    });
+  ['parcerias-busca', 'parcerias-produto', 'parcerias-status'].forEach((id) => $(id).addEventListener('input', renderizarParcerias));
+
+  // ---------------------------------------------------------------- cadastro
+
+  let parceriaEditando = null;
+  const imagensEscolhidas = {}; // campo -> File | 'remover'
+
+  function montarCampoImagem(el, campo, url) {
+    const info = IMAGENS_PARCERIA[campo];
+    const atual = parceriaEditando && parceriaEditando[campo];
+    el.innerHTML = `<span class="rotulo">${el.querySelector('.rotulo').innerHTML}</span>
+      <div class="previa-imagem">${atual && url(atual) ? `<img src="${esc(url(atual))}" alt="${esc(info.titulo)}">` : '<span class="dica">Sem imagem</span>'}</div>
+      <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-imagem="${campo}">
+      ${atual ? `<label class="checkbox"><input type="checkbox" data-remover="${campo}"> Remover imagem</label>` : ''}`;
   }
 
-  $('parcerias-tabela').addEventListener('click', async (e) => {
-    const editar = e.target.closest('[data-editar-parceria]');
-    if (editar) return editarParceria(cache.parcerias.find((p) => p.id === editar.dataset.editarParceria));
-    const excluir = e.target.closest('[data-excluir-parceria]');
-    if (!excluir) return;
-    const p = cache.parcerias.find((x) => x.id === excluir.dataset.excluirParceria);
-    if (!confirm(`Excluir a parceria "${p.nome}"? As vendas antigas continuam com o nome registrado. Para só esconder, use "Editar" e desmarque "Ativa".`)) return;
-    const { error } = await db.from('parcerias').delete().eq('id', p.id);
-    BD.toast(error ? BD.mensagemErro(error) : 'Parceria excluída.', error ? 'erro' : 'ok');
-    carregarParcerias();
+  async function editarParceria(p) {
+    parceriaEditando = p || null;
+    Object.keys(imagensEscolhidas).forEach((k) => delete imagensEscolhidas[k]);
+    $('parceria-titulo').textContent = p ? `Editar ${p.nome}` : 'Nova parceria';
+    $('parceria-nome').value = p ? p.nome : '';
+    $('parceria-responsavel').value = (p && p.responsavel) || '';
+    $('parceria-localizacao').value = (p && p.localizacao) || '';
+    $('parceria-observacoes').value = (p && p.observacoes) || '';
+    const meuId = (cache.vendedores.find((v) => v.discord_id === meuDiscordId) || {}).id || '';
+    $('parceria-feita-por').innerHTML = '<option value="">—</option>'
+      + cache.vendedores.map((v) => `<option value="${esc(v.id)}">${esc(nomeVendedor(v))}${v.ativo ? '' : ' (inativo)'}</option>`).join('');
+    $('parceria-feita-por').value = p ? (p.feita_por_id || '') : meuId;
+    const marcados = new Set((p && p.produtos) || []);
+    $('parceria-produtos').innerHTML = cache.produtos.length
+      ? cache.produtos.map((pr) => `<label class="produto-escolha"><input type="checkbox" value="${esc(pr.id)}" ${marcados.has(pr.id) ? 'checked' : ''}> ${BD.iconeProduto(pr, 'chip-img')} ${esc(pr.nome)}</label>`).join('')
+      : '<span class="dica">Cadastre produtos na aba Produtos.</span>';
+    const url = await urlsImagens(p ? [p.img_localizacao, p.img_banner, p.img_cores] : []);
+    document.querySelectorAll('#form-parceria .campo-imagem').forEach((el) => montarCampoImagem(el, el.dataset.campo, url));
+    $('parceria-erro').hidden = true;
+    $('parceria-salvar').disabled = false;
+    BD.abrirModal($('modal-parceria'), $('parceria-nome'));
+  }
+
+  $('form-parceria').addEventListener('change', (e) => {
+    const arquivo = e.target.closest('[data-imagem]');
+    if (arquivo) {
+      const f = arquivo.files[0];
+      if (f) imagensEscolhidas[arquivo.dataset.imagem] = f; else delete imagensEscolhidas[arquivo.dataset.imagem];
+      const previa = arquivo.parentElement.querySelector('.previa-imagem');
+      if (f && TIPOS_IMAGEM[f.type]) previa.innerHTML = `<img src="${URL.createObjectURL(f)}" alt="">`;
+      return;
+    }
+    const remover = e.target.closest('[data-remover]');
+    if (remover) {
+      if (remover.checked) imagensEscolhidas[remover.dataset.remover] = 'remover';
+      else delete imagensEscolhidas[remover.dataset.remover];
+    }
+  });
+
+  $('form-parceria').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const erro = $('parceria-erro');
+    const botao = $('parceria-salvar');
+    erro.hidden = true;
+    try {
+      const nome = $('parceria-nome').value.trim();
+      if (!nome) throw new Error('Preencha o nome da parceria.');
+      for (const [campo, f] of Object.entries(imagensEscolhidas)) {
+        if (f === 'remover') continue;
+        if (!TIPOS_IMAGEM[f.type]) throw new Error(`${IMAGENS_PARCERIA[campo].titulo}: use uma imagem PNG, JPG, WEBP ou GIF.`);
+        if (f.size > 5 * 1024 * 1024) throw new Error(`${IMAGENS_PARCERIA[campo].titulo}: a imagem pode ter no máximo 5 MB.`);
+      }
+      botao.disabled = true;
+      const dados = {
+        nome,
+        responsavel: $('parceria-responsavel').value.trim() || null,
+        localizacao: $('parceria-localizacao').value.trim() || null,
+        observacoes: $('parceria-observacoes').value.trim() || null,
+        feita_por_id: $('parceria-feita-por').value || null,
+        produtos: [...document.querySelectorAll('#parceria-produtos input:checked')].map((c) => c.value),
+      };
+      let id = parceriaEditando && parceriaEditando.id;
+      if (id) falhou(await db.from('parcerias').update(dados).eq('id', id));
+      else id = falhou(await db.from('parcerias').insert(dados).select('id').single()).id;
+
+      // Imagens: envia as novas, depois grava os caminhos e apaga as antigas.
+      const imagens = {};
+      const apagar = [];
+      for (const [campo, f] of Object.entries(imagensEscolhidas)) {
+        const antiga = parceriaEditando && parceriaEditando[campo];
+        if (f === 'remover') {
+          imagens[campo] = null;
+        } else {
+          const caminho = `${id}/${IMAGENS_PARCERIA[campo].arquivo}-${Date.now()}.${TIPOS_IMAGEM[f.type]}`;
+          const { error } = await db.storage.from('parcerias').upload(caminho, f, { contentType: f.type, upsert: false });
+          if (error) throw new Error(`Não consegui enviar "${IMAGENS_PARCERIA[campo].titulo}": ${BD.mensagemErro(error)}`);
+          imagens[campo] = caminho;
+        }
+        if (antiga) apagar.push(antiga);
+      }
+      if (Object.keys(imagens).length) falhou(await db.from('parcerias').update(imagens).eq('id', id));
+      if (apagar.length) await db.storage.from('parcerias').remove(apagar);
+
+      BD.fecharModal($('modal-parceria'));
+      BD.toast('Parceria salva.', 'ok');
+      await carregarParcerias();
+    } catch (err) {
+      erro.textContent = BD.mensagemErro(err);
+      erro.hidden = false;
+      botao.disabled = false;
+      if (parceriaEditando === null) carregarParcerias(); // pode ter criado antes de falhar uma imagem
+    }
+  });
+
+  $('parceria-cancelar').addEventListener('click', () => BD.fecharModal($('modal-parceria')));
+
+  // ---------------------------------------------------------------- encerrar / reativar
+
+  let encerrando = null;
+
+  function abrirEncerrar(p) {
+    encerrando = p;
+    $('encerrar-nome').textContent = p.nome;
+    $('encerrar-motivo').value = '';
+    $('encerrar-erro').hidden = true;
+    $('encerrar-confirmar').disabled = false;
+    BD.abrirModal($('modal-encerrar'), $('encerrar-motivo'));
+  }
+
+  $('form-encerrar').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const motivo = $('encerrar-motivo').value.trim();
+    const erro = $('encerrar-erro');
+    if (motivo.length < 3) {
+      erro.textContent = 'Informe o motivo do encerramento.';
+      erro.hidden = false;
+      $('encerrar-motivo').focus();
+      return;
+    }
+    $('encerrar-confirmar').disabled = true;
+    const { error } = await db.rpc('encerrar_parceria', { p_id: encerrando.id, p_motivo: motivo });
+    if (error) {
+      erro.textContent = BD.mensagemErro(error);
+      erro.hidden = false;
+      $('encerrar-confirmar').disabled = false;
+      return;
+    }
+    BD.fecharModal($('modal-encerrar'));
+    BD.toast('Parceria encerrada.', 'ok');
+    await carregarParcerias();
+    if (!$('modal-perfil').hidden) verParceria(encerrando.id);
+  });
+
+  $('encerrar-cancelar').addEventListener('click', () => BD.fecharModal($('modal-encerrar')));
+
+  async function reativarParceria(p) {
+    const { error } = await db.rpc('reativar_parceria', { p_id: p.id });
+    BD.toast(error ? BD.mensagemErro(error) : 'Parceria reativada.', error ? 'erro' : 'ok');
+    await carregarParcerias();
+    if (!$('modal-perfil').hidden) verParceria(p.id);
+  }
+
+  // ---------------------------------------------------------------- perfil
+
+  const ROTULO_HISTORICO = { criada: '🤝 Criada', editada: '✏️ Editada', encerrada: '⛔ Encerrada', reativada: '✅ Reativada' };
+
+  async function verParceria(id) {
+    const p = cache.parcerias.find((x) => x.id === id);
+    if (!p) return;
+    const conteudo = $('perfil-conteudo');
+    conteudo.innerHTML = '<p class="carregando">Carregando…</p>';
+    BD.abrirModal($('modal-perfil'), $('perfil-fechar'));
+    const [{ data: perfil, error }, url] = await Promise.all([
+      db.rpc('perfil_parceria', { p_id: id }),
+      urlsImagens([p.img_banner, p.img_localizacao, p.img_cores]),
+    ]);
+    if (error) {
+      conteudo.innerHTML = `<p class="status erro">${esc(BD.mensagemErro(error))}</p>`;
+      return;
+    }
+    const imagem = (campo) => (p[campo] && url(p[campo])
+      ? `<button type="button" class="perfil-imagem" data-ampliar="${esc(url(p[campo]))}" data-titulo="${esc(IMAGENS_PARCERIA[campo].titulo)}">
+           <img src="${esc(url(p[campo]))}" alt="${esc(IMAGENS_PARCERIA[campo].titulo)}"><span>${esc(IMAGENS_PARCERIA[campo].titulo)}</span></button>`
+      : '');
+    const vendas = perfil.vendas || [];
+    const historico = perfil.historico || [];
+    conteudo.innerHTML = `
+      <div class="perfil-banner">${p.img_banner && url(p.img_banner) ? `<img src="${esc(url(p.img_banner))}" alt="Banner de ${esc(p.nome)}">` : ''}</div>
+      <div class="perfil-cabecalho">
+        <h2 id="perfil-nome">${esc(p.nome)}</h2>
+        ${p.ativo ? '<span class="etiqueta ativo">Ativa</span>' : '<span class="etiqueta inativo">Encerrada</span>'}
+      </div>
+      ${p.ativo ? '' : `<div class="perfil-encerrada"><strong>Encerrada em ${esc(p.encerrada_em ? BD.dataHoraBR(p.encerrada_em) : '—')}</strong>
+        ${p.encerrada_por ? ` por ${esc(p.encerrada_por)}` : ''}<p>Motivo: ${esc(p.encerrada_motivo || '—')}</p></div>`}
+      <div class="perfil-acoes">
+        ${p.img_localizacao && url(p.img_localizacao) ? `<button type="button" class="botao-primario botao-pequeno" data-ampliar="${esc(url(p.img_localizacao))}" data-titulo="Localização">📍 Ver localização</button>` : ''}
+        <button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">✏️ Editar</button>
+        ${p.ativo
+          ? `<button type="button" class="botao-perigo botao-pequeno" data-encerrar-parceria="${esc(p.id)}">Encerrar parceria</button>`
+          : `<button type="button" class="botao botao-pequeno" data-reativar-parceria="${esc(p.id)}">Reativar</button>`}
+      </div>
+      <dl class="perfil-dados">
+        <div><dt>Quem fez a parceria</dt><dd>${esc(p.feita_por_nome || '—')}</dd></div>
+        <div><dt>Responsável / contato</dt><dd>${esc(p.responsavel || '—')}</dd></div>
+        <div><dt>Cadastrada em</dt><dd>${esc(BD.dataHoraBR(p.criado_em))}</dd></div>
+        <div><dt>Localização</dt><dd>${esc(p.localizacao || '—')}</dd></div>
+        <div class="largura-total"><dt>Produtos vendidos</dt><dd>${chipsProdutos(p.produtos)}</dd></div>
+        ${p.observacoes ? `<div class="largura-total"><dt>Observações</dt><dd>${esc(p.observacoes)}</dd></div>` : ''}
+      </dl>
+      ${imagem('img_localizacao') || imagem('img_cores') ? `<div class="perfil-imagens">${imagem('img_localizacao')}${imagem('img_cores')}</div>` : ''}
+      <div class="kpis perfil-kpis">
+        <div class="kpi"><span>Total comprado</span><strong>${formatarValor(perfil.total)}</strong></div>
+        <div class="kpi"><span>Vendas</span><strong>${perfil.quantidade}</strong></div>
+        <div class="kpi"><span>Primeira venda</span><strong class="kpi-data">${perfil.primeira_venda ? esc(BD.dataBR(perfil.primeira_venda)) : '—'}</strong></div>
+        <div class="kpi"><span>Última venda</span><strong class="kpi-data">${perfil.ultima_venda ? esc(BD.dataBR(perfil.ultima_venda)) : '—'}</strong></div>
+      </div>
+      ${(perfil.por_produto || []).length ? `<h3>📦 O que mais compra</h3>${chipsQuantidade(perfil.por_produto)}` : ''}
+      <h3>🧾 Histórico de vendas</h3>
+      ${vendas.length ? `<div class="tabela-wrap"><table>
+        <thead><tr><th>#</th><th>Data</th><th>Vendedor</th><th>Itens</th><th class="num">Total</th></tr></thead>
+        <tbody>${vendas.map((v) => `<tr class="${v.cancelada ? 'cancelada' : ''}">
+          <td>${v.numero}</td><td>${esc(BD.dataHoraBR(v.criado_em))}</td><td>${esc(v.vendedor_nome)}</td>
+          <td class="dica">${esc(v.itens || '')}</td><td class="num">${formatarValor(v.total)}${v.cancelada ? ' <span class="etiqueta inativo">cancelada</span>' : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : '<p class="vazio">Nenhuma venda para esta parceria ainda.</p>'}
+      <h3>🕓 Histórico da parceria</h3>
+      <ol class="linha-tempo">${historico.map((h) => `
+        <li class="evento-${esc(h.tipo)}"><strong>${ROTULO_HISTORICO[h.tipo] || esc(h.tipo)}</strong>
+          <span class="dica">${esc(BD.dataHoraBR(h.criado_em))}${h.autor ? ' · ' + esc(h.autor) : ''}</span>
+          ${h.descricao ? `<p>${esc(h.descricao)}</p>` : ''}</li>`).join('') || '<li class="dica">Sem registros.</li>'}</ol>`;
+  }
+
+  function chipsQuantidade(lista) {
+    return `<div class="chips">${lista.map((x) => `<span class="chip">${BD.iconeProduto(x, 'chip-img')} ${esc(x.nome)} <strong>×${Number(x.quantidade).toLocaleString('pt-BR')}</strong></span>`).join('')}</div>`;
+  }
+
+  $('perfil-fechar').addEventListener('click', () => BD.fecharModal($('modal-perfil')));
+
+  // Ver imagem grande.
+  function ampliarImagem(src, titulo) {
+    $('imagem-grande').src = src;
+    $('imagem-grande').alt = titulo || '';
+    $('imagem-titulo').textContent = titulo || '';
+    BD.abrirModal($('modal-imagem'), $('imagem-fechar'));
+  }
+  $('imagem-fechar').addEventListener('click', () => BD.fecharModal($('modal-imagem')));
+  $('modal-imagem').addEventListener('click', (e) => { if (e.target === $('modal-imagem')) BD.fecharModal($('modal-imagem')); });
+
+  // Botões da tabela e do perfil.
+  function acoesParceria(e) {
+    const alvo = e.target.closest('[data-ver-parceria],[data-editar-parceria],[data-encerrar-parceria],[data-reativar-parceria],[data-ampliar]');
+    if (!alvo) return;
+    if (alvo.dataset.ampliar) return ampliarImagem(alvo.dataset.ampliar, alvo.dataset.titulo);
+    const id = alvo.dataset.verParceria || alvo.dataset.editarParceria || alvo.dataset.encerrarParceria || alvo.dataset.reativarParceria;
+    const p = cache.parcerias.find((x) => x.id === id);
+    if (!p) return;
+    if (alvo.dataset.verParceria) return verParceria(id);
+    if (alvo.dataset.editarParceria) { BD.fecharModal($('modal-perfil')); return editarParceria(p); }
+    if (alvo.dataset.encerrarParceria) return abrirEncerrar(p);
+    if (alvo.dataset.reativarParceria) return reativarParceria(p);
+  }
+  $('parcerias-tabela').addEventListener('click', acoesParceria);
+  $('perfil-conteudo').addEventListener('click', acoesParceria);
+
+  // Esc fecha a janela de cima.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const topo = ['modal-imagem', 'modal-encerrar', 'modal-parceria', 'modal-perfil'].find((id) => !$(id).hidden);
+    if (topo) BD.fecharModal($(topo));
   });
 
   // ================================================================ produtos
