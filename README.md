@@ -5,6 +5,7 @@ Site estático (HTML/CSS/JS puro) hospedado no GitHub Pages, com banco de dados 
 Substitui a planilha "VENDAS MERCADO OCULTO" (abas SERRA, PENDRIVE, PAGAMENTO e Base Valores e Craft):
 
 - **Calculadora** (`index.html`): o vendedor entra com a conta do **Discord**, escolhe **Pista** ou **Parceria**, informa o cliente, monta o pedido e registra a venda. Mostra também a tabela de preços com o link para copiar e enviar.
+- **Ranking** (`ranking.html`): pódio e lista dos vendedores por total vendido, com a foto do Discord. Qualquer vendedor cadastrado vê; a comissão não aparece.
 - **Painel** (`admin.html`): relatório semanal (totais, ranking, **pagamento dos vendedores** e **craft usado**), histórico de vendas (cancelamento e exportação CSV), cadastro de vendedores, parcerias, produtos e configuração do Discord.
 - **Discord**: cada venda registrada gera um aviso no canal, e toda segunda-feira às 09:00 (horário de Brasília) sai o relatório da semana anterior. Também dá para enviar o relatório pelo painel quando quiser.
 
@@ -19,6 +20,8 @@ Substitui a planilha "VENDAS MERCADO OCULTO" (abas SERRA, PENDRIVE, PAGAMENTO e 
 ```
 index.html           Calculadora de venda
 admin.html           Painel administrativo
+ranking.html         Ranking de vendedores (semana, semana passada, mês e geral)
+js/ranking.js        Lógica do ranking
 css/style.css        Estilos (tema azul)
 js/config.js         URL e anon key do Supabase  ← editar
 js/comum.js          Funções compartilhadas

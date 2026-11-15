@@ -679,3 +679,78 @@ tr.cancelada td.acoes { opacity: 1; text-decoration: none; }
 .categoria-titulo:first-of-type { margin-top: 0; }
 
 .item-craft { margin: 2px 0 0; color: var(--texto-suave); font-size: 0.72rem; opacity: 0.8; }
+
+/* Ranking */
+
+.seletor-periodo { flex-wrap: wrap; }
+.seletor-periodo label { min-width: 120px; }
+.ranking-periodo { text-align: center; margin-top: 10px; }
+
+.podio {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 14px;
+  margin: 0 0 18px;
+}
+.podio:empty { display: none; }
+
+.podio-lugar {
+  flex: 1;
+  max-width: 230px;
+  text-align: center;
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  padding: 16px 12px 0;
+  box-shadow: var(--sombra);
+  overflow: hidden;
+}
+.podio-lugar.lugar-1 { border-color: var(--amarelo); box-shadow: 0 0 22px rgba(240, 178, 50, 0.25); }
+.podio-lugar.eu { outline: 2px solid var(--ciano); outline-offset: 2px; }
+.podio-medalha { font-size: 2rem; line-height: 1; margin-bottom: 8px; }
+.podio-avatar { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; border: 3px solid var(--borda); }
+.lugar-1 .podio-avatar { width: 84px; height: 84px; border-color: var(--amarelo); }
+.lugar-2 .podio-avatar { border-color: #c0c7d2; }
+.lugar-3 .podio-avatar { border-color: #cd7f4a; }
+.podio-nome { margin: 8px 0 2px; font-weight: 700; overflow-wrap: anywhere; }
+.podio-total { margin: 0; font-size: 1.15rem; font-weight: 700; color: var(--azul-claro); }
+.lugar-1 .podio-total { color: var(--amarelo); font-size: 1.3rem; }
+.podio-base {
+  margin: 12px -12px 0;
+  padding: 8px 0;
+  font-weight: 800;
+  font-size: 1.1rem;
+  background: linear-gradient(180deg, var(--cartao-item), var(--azul-profundo));
+  color: var(--texto-suave);
+}
+.lugar-1 .podio-base { padding: 22px 0; color: var(--amarelo); }
+.lugar-2 .podio-base { padding: 14px 0; }
+
+.avatar-inicial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--azul), var(--azul-escuro));
+  color: #fff;
+  font-weight: 700;
+}
+.podio-avatar.avatar-inicial { font-size: 1.6rem; }
+
+.tabela-ranking td.posicao { font-size: 1.1rem; width: 48px; text-align: center; font-weight: 700; color: var(--texto-suave); }
+.tabela-ranking tr.linha-eu td { background: rgba(47, 224, 255, 0.07); }
+.ranking-vendedor { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+.ranking-avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex-shrink: 0; font-size: 0.9rem; }
+.ranking-barra { height: 5px; background: var(--cartao-item); border-radius: 3px; margin-top: 5px; width: 160px; max-width: 100%; }
+.ranking-barra span { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--azul), var(--ciano)); }
+
+@media (max-width: 560px) {
+  .podio { gap: 6px; }
+  .podio-lugar { padding: 10px 6px 0; }
+  .podio-avatar { width: 48px; height: 48px; }
+  .lugar-1 .podio-avatar { width: 60px; height: 60px; }
+  .podio-total { font-size: 0.95rem; }
+  .lugar-1 .podio-total { font-size: 1.05rem; }
+  .podio-base { margin: 10px -6px 0; }
+  .seletor-periodo label { min-width: calc(50% - 5px); }
+}

@@ -67,6 +67,8 @@ alter table public.vendedores add column if not exists no_servidor boolean;
 alter table public.vendedores add column if not exists nome_discord_em timestamptz;
 -- IDs dos cargos que a pessoa tem no servidor (também preenchido pelo bot).
 alter table public.vendedores add column if not exists cargos text[] not null default '{}';
+-- Foto do Discord (do servidor, se tiver; senão a da conta). Usada no ranking.
+alter table public.vendedores add column if not exists avatar text;
 
 -- Imagem do produto na calculadora (caminho no site ou URL). Sem imagem, usa o ícone (emoji).
 alter table public.produtos add column if not exists imagem text;
@@ -259,7 +261,7 @@ create policy parcerias_admin on public.parcerias for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
 
 -- Vendedores: só o admin lê. Criação/edição via RPC salvar_vendedor.
-grant select (id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em, cargos) on public.vendedores to authenticated;
+grant select (id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em, cargos, avatar) on public.vendedores to authenticated;
 alter table public.discord_pedidos enable row level security;
 revoke all on public.discord_pedidos from anon, authenticated;
 alter table public.discord_cargos enable row level security;
@@ -511,6 +513,40 @@ begin
   perform public._notificar_venda(v_id);
 
   return jsonb_build_object('id', v_id, 'numero', v_numero, 'total', v_total, 'comissao', v_comissao);
+end;
+$$;
+
+-- Ranking de vendedores do período (datas no fuso de Brasília; p_inicio nulo = desde o começo).
+-- Qualquer vendedor cadastrado pode ver. Não mostra comissão.
+create or replace function public.ranking_vendedores(p_inicio date, p_fim date)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  v_eu uuid := (public._vendedor_atual()).id;
+  v_ini timestamptz := coalesce(p_inicio, date '2000-01-01')::timestamp at time zone 'America/Sao_Paulo';
+  v_fim timestamptz := (coalesce(p_fim, (now() at time zone 'America/Sao_Paulo')::date) + 1)::timestamp at time zone 'America/Sao_Paulo';
+begin
+  if v_eu is null and not public.is_admin() then
+    raise exception 'NAO_CADASTRADO' using hint = 'Peça a um administrador para cadastrar seu ID do Discord.';
+  end if;
+  return coalesce((
+    select jsonb_agg(x order by x.posicao, x.nome)
+    from (
+      select rank() over (order by sum(ve.total) desc) as posicao,
+             coalesce(max(vd.nome_discord), max(vd.nome), max(ve.vendedor_nome)) as nome,
+             max(vd.avatar) as avatar,
+             count(*) as vendas,
+             coalesce(sum(it.qtd), 0) as itens,
+             sum(ve.total) as total,
+             ve.vendedor_id = v_eu as eu
+      from public.vendas ve
+      left join public.vendedores vd on vd.id = ve.vendedor_id
+      left join lateral (select sum(i.quantidade) as qtd from public.venda_itens i where i.venda_id = ve.id) it on true
+      where not ve.cancelada and ve.criado_em >= v_ini and ve.criado_em < v_fim
+      group by ve.vendedor_id
+    ) x), '[]'::jsonb);
 end;
 $$;
 
@@ -908,7 +944,14 @@ begin
       v_nome := coalesce(nullif(v_corpo->>'nick', ''), nullif(v_corpo->'user'->>'global_name', ''), v_corpo->'user'->>'username');
       update public.vendedores
          set nome_discord = left(v_nome, 40), no_servidor = true, nome_discord_em = now(),
-             cargos = coalesce(array(select jsonb_array_elements_text(v_corpo->'roles')), '{}')
+             cargos = coalesce(array(select jsonb_array_elements_text(v_corpo->'roles')), '{}'),
+             avatar = case
+               when coalesce(v_corpo->>'avatar', '') ~ '^[a-z0-9_]+$' then
+                 'https://cdn.discordapp.com/guilds/' || (select discord_servidor_id from public.configuracoes where id = 1)
+                 || '/users/' || (v_corpo->'user'->>'id') || '/avatars/' || (v_corpo->>'avatar') || '.png?size=128'
+               when coalesce(v_corpo->'user'->>'avatar', '') ~ '^[a-z0-9_]+$' then
+                 'https://cdn.discordapp.com/avatars/' || (v_corpo->'user'->>'id') || '/' || (v_corpo->'user'->>'avatar') || '.png?size=128'
+             end
        where id = r.vendedor_id;
       v_atualizados := v_atualizados + 1;
     elsif r.status_code = 404 and (v_corpo->>'code') = '10007' then
@@ -1005,6 +1048,7 @@ grant execute on function public.is_admin() to anon, authenticated;
 grant execute on function public.meu_perfil() to authenticated;
 grant execute on function public.registrar_venda(jsonb, uuid, text, text) to authenticated;
 grant execute on function public.minha_semana() to authenticated;
+grant execute on function public.ranking_vendedores(date, date) to authenticated;
 grant execute on function public.salvar_vendedor(uuid, text, text, boolean, boolean) to authenticated;
 grant execute on function public.relatorio_periodo(date, date) to authenticated;
 grant execute on function public.enviar_relatorio_discord(date) to authenticated;

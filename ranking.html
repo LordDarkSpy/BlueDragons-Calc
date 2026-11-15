@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Ranking — Blue Dragons</title>
+<link rel="icon" type="image/png" href="img/logo.png">
+<link rel="stylesheet" href="css/style.css?v=6">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-conteudo">
+    <img class="topo-logo" src="img/logo.png" alt="Blue Dragons" width="64" height="61">
+    <div class="topo-textos">
+      <h1>Blue Dragons</h1>
+      <p>Ranking de Vendedores</p>
+    </div>
+    <div class="topo-acoes">
+      <a class="botao botao-pequeno" href="./">🧮 Calculadora</a>
+    </div>
+  </div>
+</header>
+
+<main id="principal" class="container largo">
+
+  <section id="ranking-login" class="cartao login-admin" hidden>
+    <img class="modal-logo" src="img/logo.png" alt="" width="72" height="69">
+    <h2 style="justify-content:center">🏆 Ranking</h2>
+    <p id="ranking-login-texto" class="modal-texto">Entre com a sua conta do Discord para ver o ranking.</p>
+    <p id="ranking-login-erro" class="status erro" hidden></p>
+    <button id="ranking-entrar" type="button" class="botao-discord botao-bloco">Entrar com Discord</button>
+  </section>
+
+  <div id="ranking-app" hidden>
+    <section class="cartao">
+      <h2>🏆 Ranking de vendedores</h2>
+      <div class="seletor-parceria seletor-periodo" role="radiogroup" aria-label="Período do ranking">
+        <label><input type="radio" name="periodo" value="semana" checked><span>Esta semana</span></label>
+        <label><input type="radio" name="periodo" value="anterior"><span>Semana passada</span></label>
+        <label><input type="radio" name="periodo" value="mes"><span>Este mês</span></label>
+        <label><input type="radio" name="periodo" value="geral"><span>Geral</span></label>
+      </div>
+      <p id="ranking-periodo" class="dica ranking-periodo"></p>
+    </section>
+
+    <section id="ranking-podio" class="podio" aria-label="Pódio"></section>
+
+    <section class="cartao">
+      <div id="ranking-lista" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
+    </section>
+  </div>
+</main>
+
+<footer class="rodape">
+  <p>Blue Dragons</p>
+  <p class="creditos">Desenvolvido por Omar Telo · © 2026 Todos os direitos reservados</p>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="js/config.js?v=2"></script>
+<script src="js/comum.js?v=4"></script>
+<script src="js/ranking.js?v=1"></script>
+</body>
+</html>
