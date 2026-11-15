@@ -83,7 +83,7 @@ Abra `admin.html`, entre com o usuário admin e:
 
 ## Publicar no GitHub Pages
 
-Já está publicado a partir da branch `main` (pasta raiz) em
+Publicado a partir da branch `main` (pasta raiz) em
 <https://lorddarkspy.github.io/BlueDragons-Calc/>. Cada `git push` atualiza o site em cerca de um minuto.
 Ao alterar um `.js` ou `.css`, aumente o `?v=` no HTML para evitar cache antigo.
 
