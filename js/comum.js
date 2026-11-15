@@ -168,3 +168,22 @@
 
   window.BD = BD;
 })();
+
+// Banner do dragão: toca uma vez ao abrir (o dragão chega e pousa) e fica pousado.
+// Clicar no banner repete. Com "reduzir movimento" ligado, mostra só o dragão pousado.
+(function () {
+  const banner = document.querySelector('.banner-dragao');
+  const video = banner && banner.querySelector('video');
+  if (!video) return;
+  let reduzir = false;
+  try { reduzir = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { /* navegador antigo */ }
+  const tocar = () => {
+    try {
+      video.currentTime = 0;
+      const p = video.play();
+      if (p && p.catch) p.catch(() => { /* autoplay bloqueado: fica o pôster (dragão pousado) */ });
+    } catch (e) { /* sem suporte a vídeo: fica o pôster */ }
+  };
+  if (!reduzir) tocar();
+  banner.addEventListener('click', tocar);
+})();
