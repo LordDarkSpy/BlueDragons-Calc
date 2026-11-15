@@ -3,9 +3,9 @@
     <rect x="25" y="5" width="14" height="12" rx="1.5" fill="#cfd5dd"/>
     <rect x="28" y="8.5" width="3" height="3" fill="#5b6270"/>
     <rect x="33" y="8.5" width="3" height="3" fill="#5b6270"/>
-    <rect x="21" y="15" width="22" height="42" rx="6" fill="#2fbf71"/>
-    <rect x="21" y="21" width="22" height="4" fill="#1e8a50"/>
-    <rect x="25" y="29" width="14" height="17" rx="2" fill="#d9f7e6"/>
-    <path d="M32 32 l4 5 l-4 5 l-4 -5 z" fill="#1e8a50"/>
+    <rect x="21" y="15" width="22" height="42" rx="6" fill="#2bd44a"/>
+    <rect x="21" y="21" width="22" height="4" fill="#1a9a33"/>
+    <rect x="25" y="29" width="14" height="17" rx="2" fill="#dcfae3"/>
+    <path d="M32 32 l4 5 l-4 5 l-4 -5 z" fill="#1a9a33"/>
     <circle cx="32" cy="52" r="2.2" fill="#0d1424"/>
   </g></svg>
