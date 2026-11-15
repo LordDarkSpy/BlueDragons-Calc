@@ -898,7 +898,7 @@ begin
 
     if r.tipo = 'cargos' and r.status_code = 200 and jsonb_typeof(v_corpo) = 'array' then
       -- Lista de cargos do servidor (sem @everyone e sem cargos de bots/integrações).
-      delete from public.discord_cargos;
+      delete from public.discord_cargos where true; -- o Supabase recusa DELETE sem WHERE
       insert into public.discord_cargos (id, nome, cor, posicao)
       select c->>'id', left(c->>'name', 100), coalesce((c->>'color')::int, 0), coalesce((c->>'position')::int, 0)
       from jsonb_array_elements(v_corpo) c
