@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calculadora de Venda — Blue Dragons</title>
+<link rel="icon" type="image/png" href="img/logo.png">
+<link rel="stylesheet" href="css/style.css?v=2">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-conteudo">
+    <img class="topo-logo" src="img/logo.png" alt="Blue Dragons" width="64" height="61">
+    <div class="topo-textos">
+      <h1>Blue Dragons</h1>
+      <p>Calculadora de Venda</p>
+    </div>
+    <div class="topo-acoes">
+      <a class="botao botao-pequeno" href="admin.html">⚙️ Painel</a>
+    </div>
+  </div>
+</header>
+
+<main id="principal" class="container">
+
+  <div class="coluna-principal">
+    <section class="cartao">
+      <h2>Tipo de venda</h2>
+      <div class="seletor-parceria" role="radiogroup" aria-label="Tipo de venda">
+        <label>
+          <input type="radio" name="parceria" value="sem" checked>
+          <span>Pista</span>
+        </label>
+        <label>
+          <input type="radio" name="parceria" value="com">
+          <span>Parceria</span>
+        </label>
+      </div>
+      <div id="campo-parceria" hidden>
+        <label class="rotulo" for="select-parceria">Parceria <span class="obrigatorio">*</span></label>
+        <select id="select-parceria">
+          <option value="">Selecione a parceria…</option>
+        </select>
+        <p id="sem-parcerias" class="dica" hidden>Nenhuma parceria cadastrada. Peça a um administrador para cadastrar no painel.</p>
+      </div>
+    </section>
+
+    <section id="lista-itens" class="cartao" aria-live="polite">
+      <h2>Itens</h2>
+      <p class="carregando">Carregando itens…</p>
+    </section>
+  </div>
+
+  <div class="coluna-lateral">
+    <aside class="cartao">
+      <h2>Resumo da venda</h2>
+      <div class="vendedor-atual">
+        <span>👤 <strong id="vendedor-nome">—</strong></span>
+        <button id="trocar-vendedor" type="button" class="botao-link">Trocar</button>
+      </div>
+      <p id="minha-semana" class="minha-semana" hidden></p>
+      <p id="resumo-tipo" class="resumo-tipo">Pista</p>
+      <ul id="resumo-lista" class="resumo-lista">
+        <li class="resumo-vazio">Nenhum item selecionado</li>
+      </ul>
+      <div class="resumo-total">
+        <span>Total</span>
+        <strong id="total-valor">R$ 0</strong>
+      </div>
+      <label class="rotulo" for="cliente">Cliente <span class="opcional">(opcional)</span></label>
+      <input id="cliente" type="text" maxlength="60" autocomplete="off" placeholder="Ex.: nome ou organização do comprador">
+      <label class="rotulo" for="observacao">Observação <span class="opcional">(opcional)</span></label>
+      <textarea id="observacao" maxlength="300" rows="2" placeholder="Ex.: entrega, combinado…"></textarea>
+      <button id="registrar" type="button" class="botao-primario botao-bloco">📝 Registrar venda</button>
+      <p id="status" class="status" role="status" hidden></p>
+      <button id="copiar" type="button" class="botao botao-bloco">📋 Copiar valor total</button>
+      <button id="limpar" type="button" class="botao-secundario botao-bloco">Limpar tudo</button>
+    </aside>
+
+    <section class="cartao">
+      <h2>Tabela para enviar</h2>
+      <a href="img/tabela_v1.png" target="_blank" rel="noopener">
+        <img class="tabela-preview" src="img/tabela_v1.png" alt="Tabela de preços do Mercado Oculto Blue Dragons" loading="lazy">
+      </a>
+      <input id="link-tabela" type="text" readonly aria-label="Link da tabela de preços">
+      <button id="copiar-link" type="button" class="botao botao-bloco">📋 Copiar link da tabela</button>
+    </section>
+  </div>
+
+</main>
+
+<footer class="rodape">
+  <p>Blue Dragons</p>
+  <p>© 2026 Todos os direitos reservados</p>
+</footer>
+
+<div id="modal-vendedor" class="modal-fundo" hidden>
+  <form id="form-vendedor" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="modal-vendedor-titulo">
+    <img class="modal-logo" src="img/logo.png" alt="" width="72" height="69">
+    <h2 id="modal-vendedor-titulo">Identifique-se</h2>
+    <p class="modal-texto">Selecione seu nome e digite seu PIN para registrar vendas.</p>
+    <label class="rotulo" for="select-vendedor">Vendedor <span class="obrigatorio">*</span></label>
+    <select id="select-vendedor" required>
+      <option value="">Carregando…</option>
+    </select>
+    <label class="rotulo" for="input-pin">PIN <span class="obrigatorio">*</span></label>
+    <input id="input-pin" class="pin-input" type="password" inputmode="numeric" pattern="\d*" maxlength="8" autocomplete="current-password" placeholder="••••" required>
+    <p class="dica">Não tem PIN? Peça a um administrador para cadastrar você.</p>
+    <p id="modal-vendedor-erro" class="status erro" hidden></p>
+    <button id="entrar" type="submit" class="botao-primario botao-bloco">Entrar</button>
+    <button id="cancelar-vendedor" type="button" class="botao-secundario botao-bloco" hidden>Cancelar</button>
+  </form>
+</div>
+
+<div id="modal-sucesso" class="modal-fundo" hidden>
+  <div class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="sucesso-titulo">
+    <div class="sucesso-icone" aria-hidden="true">✓</div>
+    <h2 id="sucesso-titulo">Venda registrada!</h2>
+    <p id="sucesso-texto" class="modal-texto">Venda salva e enviada para o Discord.</p>
+    <p class="modal-texto">Valor total cobrado</p>
+    <p id="sucesso-total" class="sucesso-total">R$ 0</p>
+    <p id="sucesso-detalhe" class="sucesso-detalhe"></p>
+    <button id="sucesso-copiar" type="button" class="botao botao-bloco">📋 Copiar valor</button>
+    <button id="sucesso-ok" type="button" class="botao-primario botao-bloco">Nova venda</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="js/config.js?v=1"></script>
+<script src="js/comum.js?v=1"></script>
+<script src="js/calculadora.js?v=2"></script>
+</body>
+</html>

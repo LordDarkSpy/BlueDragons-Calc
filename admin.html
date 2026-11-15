@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Painel — Blue Dragons</title>
+<link rel="icon" type="image/png" href="img/logo.png">
+<link rel="stylesheet" href="css/style.css?v=2">
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-conteudo">
+    <img class="topo-logo" src="img/logo.png" alt="Blue Dragons" width="64" height="61">
+    <div class="topo-textos">
+      <h1>Blue Dragons</h1>
+      <p>Gestão de Vendas</p>
+    </div>
+    <div class="topo-acoes">
+      <span id="usuario-admin" class="usuario-admin" hidden></span>
+      <a class="botao botao-pequeno" href="./">🧮 Calculadora</a>
+      <button id="sair" type="button" class="botao botao-pequeno" hidden>Sair</button>
+    </div>
+  </div>
+</header>
+
+<main id="principal" class="container largo">
+
+  <!-- Login -->
+  <form id="form-login" class="cartao login-admin" hidden>
+    <img class="modal-logo" src="img/logo.png" alt="" width="72" height="69">
+    <h2 style="justify-content:center">Acesso administrativo</h2>
+    <label class="rotulo" for="login-email">E-mail</label>
+    <input id="login-email" type="email" autocomplete="username" required>
+    <label class="rotulo" for="login-senha">Senha</label>
+    <input id="login-senha" type="password" autocomplete="current-password" required>
+    <p id="login-erro" class="status erro" hidden></p>
+    <button id="login-entrar" type="submit" class="botao-primario botao-bloco">Entrar</button>
+  </form>
+
+  <section id="sem-permissao" class="cartao login-admin" hidden>
+    <h2 style="justify-content:center">Sem permissão</h2>
+    <p class="modal-texto">Sua conta não é administradora. Peça a um administrador para incluir seu usuário na tabela <code>admins</code>.</p>
+    <button id="sair-sem-permissao" type="button" class="botao botao-bloco">Sair</button>
+  </section>
+
+  <!-- Painel -->
+  <div id="app" hidden>
+    <nav class="abas" role="tablist" aria-label="Seções do painel">
+      <button type="button" role="tab" data-aba="relatorio" aria-selected="true">📊 Relatório semanal</button>
+      <button type="button" role="tab" data-aba="vendas" aria-selected="false">🧾 Vendas</button>
+      <button type="button" role="tab" data-aba="vendedores" aria-selected="false">👤 Vendedores</button>
+      <button type="button" role="tab" data-aba="parcerias" aria-selected="false">🤝 Parcerias</button>
+      <button type="button" role="tab" data-aba="produtos" aria-selected="false">📦 Produtos</button>
+      <button type="button" role="tab" data-aba="config" aria-selected="false">🔔 Discord</button>
+    </nav>
+
+    <!-- Relatório semanal -->
+    <section id="aba-relatorio" class="painel" role="tabpanel">
+      <div class="cartao barra-ferramentas">
+        <div class="navegador-semana">
+          <button id="semana-anterior" type="button" class="botao botao-pequeno" aria-label="Semana anterior">◀</button>
+          <strong id="semana-titulo">—</strong>
+          <button id="semana-proxima" type="button" class="botao botao-pequeno" aria-label="Próxima semana">▶</button>
+          <button id="semana-atual" type="button" class="botao-link">Semana atual</button>
+        </div>
+        <span class="espaco"></span>
+        <button id="relatorio-csv" type="button" class="botao">⬇️ Exportar CSV</button>
+        <button id="relatorio-discord" type="button" class="botao-primario">📤 Enviar ao Discord</button>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi"><span>Total vendido</span><strong id="kpi-total">—</strong><small id="kpi-variacao"></small></div>
+        <div class="kpi"><span>Vendas</span><strong id="kpi-quantidade">—</strong></div>
+        <div class="kpi"><span>Ticket médio</span><strong id="kpi-ticket">—</strong></div>
+        <div class="kpi"><span>Com parceria</span><strong id="kpi-com">—</strong></div>
+        <div class="kpi"><span>Pista</span><strong id="kpi-sem">—</strong></div>
+        <div class="kpi"><span>Comissões</span><strong id="kpi-comissao">—</strong><small id="kpi-pct"></small></div>
+      </div>
+
+      <div class="grade-relatorio">
+        <div class="cartao"><h2>🏆 Vendedores e pagamento</h2><div id="rel-vendedores" class="tabela-wrap"></div></div>
+        <div class="cartao"><h2>🤝 Parcerias</h2><div id="rel-parcerias" class="tabela-wrap"></div></div>
+        <div class="cartao"><h2>📦 Produtos</h2><div id="rel-produtos" class="tabela-wrap"></div></div>
+        <div class="cartao"><h2>🔧 Craft usado</h2><div id="rel-craft" class="tabela-wrap"></div></div>
+      </div>
+    </section>
+
+    <!-- Vendas -->
+    <section id="aba-vendas" class="painel" role="tabpanel" hidden>
+      <div class="cartao">
+        <h2>Vendas</h2>
+        <div class="grade-form">
+          <div><label class="rotulo" for="vendas-de">De</label><input id="vendas-de" type="date"></div>
+          <div><label class="rotulo" for="vendas-ate">Até</label><input id="vendas-ate" type="date"></div>
+          <div><label class="rotulo" for="vendas-vendedor">Vendedor</label><select id="vendas-vendedor"><option value="">Todos</option></select></div>
+          <div><label class="rotulo" for="vendas-parceria">Parceria</label><select id="vendas-parceria"><option value="">Todas</option><option value="sem">Pista (sem parceria)</option></select></div>
+        </div>
+        <label class="checkbox"><input id="vendas-canceladas" type="checkbox"> Mostrar canceladas</label>
+        <div class="barra-ferramentas" style="margin-top:14px">
+          <span id="vendas-resumo" class="usuario-admin"></span>
+          <span class="espaco"></span>
+          <button id="vendas-csv" type="button" class="botao">⬇️ Exportar CSV</button>
+        </div>
+      </div>
+      <div class="cartao tabela-wrap" id="vendas-tabela"><p class="carregando">Carregando…</p></div>
+    </section>
+
+    <!-- Vendedores -->
+    <section id="aba-vendedores" class="painel" role="tabpanel" hidden>
+      <div class="cartao">
+        <h2>Vendedores <button type="button" class="botao-primario botao-pequeno" data-novo="vendedor">+ Novo vendedor</button></h2>
+        <div id="vendedores-tabela" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
+      </div>
+    </section>
+
+    <!-- Parcerias -->
+    <section id="aba-parcerias" class="painel" role="tabpanel" hidden>
+      <div class="cartao">
+        <h2>Parcerias <button type="button" class="botao-primario botao-pequeno" data-novo="parceria">+ Nova parceria</button></h2>
+        <div id="parcerias-tabela" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
+      </div>
+    </section>
+
+    <!-- Produtos -->
+    <section id="aba-produtos" class="painel" role="tabpanel" hidden>
+      <div class="cartao">
+        <h2>Produtos <button type="button" class="botao-primario botao-pequeno" data-novo="produto">+ Novo produto</button></h2>
+        <div id="produtos-tabela" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
+      </div>
+    </section>
+
+    <!-- Configurações / Discord -->
+    <section id="aba-config" class="painel" role="tabpanel" hidden>
+      <form id="form-config" class="cartao">
+        <h2>Notificações no Discord</h2>
+        <p class="dica">No Discord: Configurações do canal → Integrações → Webhooks → Novo webhook → Copiar URL. As URLs ficam guardadas só no banco (não aparecem no site público).</p>
+        <label class="rotulo" for="cfg-webhook-vendas">Webhook de vendas</label>
+        <div class="barra-ferramentas">
+          <input id="cfg-webhook-vendas" type="url" placeholder="https://discord.com/api/webhooks/…" style="flex:1;min-width:220px">
+          <button type="button" class="botao" data-testar="cfg-webhook-vendas">Testar</button>
+        </div>
+        <label class="checkbox"><input id="cfg-notificar" type="checkbox"> Avisar no Discord a cada venda registrada</label>
+
+        <label class="rotulo" for="cfg-webhook-relatorios">Webhook de relatórios <span class="opcional">(se vazio, usa o de vendas)</span></label>
+        <div class="barra-ferramentas">
+          <input id="cfg-webhook-relatorios" type="url" placeholder="https://discord.com/api/webhooks/…" style="flex:1;min-width:220px">
+          <button type="button" class="botao" data-testar="cfg-webhook-relatorios">Testar</button>
+        </div>
+        <label class="checkbox"><input id="cfg-automatico" type="checkbox"> Enviar o relatório da semana anterior toda segunda-feira às 09:00</label>
+
+        <div class="grade-form">
+          <div><label class="rotulo" for="cfg-nome">Nome da organização</label><input id="cfg-nome" type="text" maxlength="40"></div>
+          <div><label class="rotulo" for="cfg-moeda">Símbolo da moeda</label><input id="cfg-moeda" type="text" maxlength="5"></div>
+          <div><label class="rotulo" for="cfg-comissao">Comissão do vendedor (%)</label><input id="cfg-comissao" type="number" min="0" max="100" step="0.5"><p class="dica">Calculada sobre quantidade × preço de parceria, como na planilha. Vale para as próximas vendas.</p></div>
+        </div>
+        <button id="cfg-salvar" type="submit" class="botao-primario botao-bloco">💾 Salvar configurações</button>
+      </form>
+    </section>
+  </div>
+</main>
+
+<footer class="rodape">
+  <p>Blue Dragons · Painel administrativo</p>
+</footer>
+
+<!-- Modal de edição genérico -->
+<div id="modal-edicao" class="modal-fundo" hidden>
+  <form id="form-edicao" class="modal modal-largo cartao" role="dialog" aria-modal="true" aria-labelledby="edicao-titulo">
+    <h2 id="edicao-titulo">Editar</h2>
+    <div id="edicao-campos"></div>
+    <p id="edicao-erro" class="status erro" hidden></p>
+    <button id="edicao-salvar" type="submit" class="botao-primario botao-bloco">💾 Salvar</button>
+    <button id="edicao-cancelar" type="button" class="botao-secundario botao-bloco">Cancelar</button>
+  </form>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="js/config.js?v=1"></script>
+<script src="js/comum.js?v=2"></script>
+<script src="js/admin.js?v=2"></script>
+</body>
+</html>

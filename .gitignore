@@ -1,0 +1,7 @@
+# Arquivos de referência locais (não publicar)
+*.xlsx
+*.zip
+/banner.png
+node_modules/
+.DS_Store
+Thumbs.db

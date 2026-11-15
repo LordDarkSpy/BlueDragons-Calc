@@ -1,0 +1,740 @@
+-- =============================================================================
+-- Blue Dragons — Calculadora e Gestão de Vendas
+-- Rode este arquivo inteiro no Supabase: Dashboard → SQL Editor → New query.
+-- Pode ser executado de novo sem perder dados (idempotente).
+-- =============================================================================
+
+create extension if not exists pgcrypto with schema extensions;
+create extension if not exists pg_net;
+create extension if not exists pg_cron;
+
+-- -----------------------------------------------------------------------------
+-- Tabelas
+-- -----------------------------------------------------------------------------
+
+-- Usuários do Supabase Auth que podem acessar o painel administrativo.
+create table if not exists public.admins (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  criado_em timestamptz not null default now()
+);
+
+create table if not exists public.produtos (
+  id uuid primary key default gen_random_uuid(),
+  nome text not null check (length(trim(nome)) between 1 and 60),
+  icone text not null default '📦',
+  preco_com_parceria numeric(12, 2) not null default 0 check (preco_com_parceria >= 0),
+  preco_sem_parceria numeric(12, 2) not null default 0 check (preco_sem_parceria >= 0),
+  categoria text not null default 'Geral',
+  -- Materiais de craft por unidade (aba "Base Valores e Craft" da planilha).
+  craft_placa int not null default 0 check (craft_placa >= 0),
+  craft_material int not null default 0 check (craft_material >= 0),
+  material_nome text not null default 'Plástico',
+  ordem int not null default 0,
+  ativo boolean not null default true,
+  criado_em timestamptz not null default now()
+);
+
+create table if not exists public.parcerias (
+  id uuid primary key default gen_random_uuid(),
+  nome text not null check (length(trim(nome)) between 1 and 60),
+  responsavel text,
+  observacoes text,
+  ativo boolean not null default true,
+  criado_em timestamptz not null default now()
+);
+
+create table if not exists public.vendedores (
+  id uuid primary key default gen_random_uuid(),
+  nome text not null check (length(trim(nome)) between 2 and 40),
+  discord_id text check (discord_id is null or discord_id ~ '^\d{17,20}$'),
+  pin_hash text not null,
+  ativo boolean not null default true,
+  tentativas_falhas int not null default 0,
+  bloqueado_ate timestamptz,
+  criado_em timestamptz not null default now()
+);
+
+-- Sessões dos vendedores na calculadora (criadas ao digitar o PIN).
+create table if not exists public.vendedor_sessoes (
+  token text primary key default encode(extensions.gen_random_bytes(24), 'hex'),
+  vendedor_id uuid not null references public.vendedores (id) on delete cascade,
+  criado_em timestamptz not null default now(),
+  expira_em timestamptz not null default now() + interval '30 days'
+);
+
+create table if not exists public.vendas (
+  id uuid primary key default gen_random_uuid(),
+  numero bigint generated always as identity,
+  criado_em timestamptz not null default now(),
+  vendedor_id uuid not null references public.vendedores (id) on delete restrict,
+  vendedor_nome text not null,
+  parceria_id uuid references public.parcerias (id) on delete set null,
+  parceria_nome text,
+  com_parceria boolean not null default false,
+  cliente text,
+  total numeric(12, 2) not null check (total >= 0),
+  comissao numeric(12, 2) not null default 0,
+  observacao text,
+  cancelada boolean not null default false,
+  cancelada_em timestamptz
+);
+
+create index if not exists vendas_criado_em_idx on public.vendas (criado_em);
+create index if not exists vendas_vendedor_idx on public.vendas (vendedor_id);
+
+create table if not exists public.venda_itens (
+  id bigint generated always as identity primary key,
+  venda_id uuid not null references public.vendas (id) on delete cascade,
+  produto_id uuid references public.produtos (id) on delete set null,
+  produto_nome text not null,
+  icone text,
+  quantidade int not null check (quantidade > 0),
+  preco_unitario numeric(12, 2) not null,
+  subtotal numeric(12, 2) not null,
+  comissao numeric(12, 2) not null default 0,
+  craft_placa int not null default 0,
+  craft_material int not null default 0,
+  material_nome text
+);
+
+create index if not exists venda_itens_venda_idx on public.venda_itens (venda_id);
+
+-- Configuração única (linha id = 1): webhooks do Discord e opções gerais.
+create table if not exists public.configuracoes (
+  id int primary key default 1 check (id = 1),
+  nome_organizacao text not null default 'Blue Dragons',
+  moeda text not null default 'R$ ',
+  webhook_vendas text,
+  webhook_relatorios text,
+  notificar_vendas boolean not null default true,
+  relatorio_automatico boolean not null default true,
+  -- Pagamento do vendedor: % sobre (quantidade × preço de parceria), como na aba PAGAMENTO.
+  percentual_comissao numeric(5, 4) not null default 0.15 check (percentual_comissao between 0 and 1),
+  atualizado_em timestamptz not null default now()
+);
+
+insert into public.configuracoes (id) values (1) on conflict (id) do nothing;
+
+-- Produtos iniciais (tabela de preços do Mercado Oculto). Só entram se a tabela estiver vazia.
+insert into public.produtos (nome, icone, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem)
+select * from (values
+  ('Pendrive Fajuto',      '💾', 'Pendrives',   3000,  3600, 14, 14, 'Plástico', 10),
+  ('Pendrive Comum',       '💾', 'Pendrives',   4200,  4800, 20, 20, 'Plástico', 20),
+  ('Pendrive Incomum',     '💚', 'Pendrives',   6600,  7200, 24, 24, 'Plástico', 30),
+  ('Pendrive Raro',        '❤️', 'Pendrives',  14400, 17280, 28, 28, 'Plástico', 40),
+  ('Pendrive Especial',    '🖤', 'Pendrives',  30000, 31200, 34, 34, 'Plástico', 50),
+  ('Serra',                '🪚', 'Ferramentas', 4800,  5400, 10, 10, 'Metal',    60),
+  ('Chave de Fenda',       '🪛', 'Ferramentas', 3000,  3500,  8,  8, 'Metal',    70),
+  ('Silenciador de Sinal', '📡', 'Ferramentas',10000, 11500, 15, 20, 'Metal',    80),
+  ('Algema',               '⛓️', 'Ferramentas', 3600,  4200, 30, 30, 'Metal',    90)
+) as p (nome, icone, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem)
+where not exists (select 1 from public.produtos);
+
+-- -----------------------------------------------------------------------------
+-- Permissões e RLS
+-- -----------------------------------------------------------------------------
+
+create or replace function public.is_admin()
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$
+  select exists (select 1 from public.admins where user_id = auth.uid());
+$$;
+
+alter table public.admins enable row level security;
+alter table public.produtos enable row level security;
+alter table public.parcerias enable row level security;
+alter table public.vendedores enable row level security;
+alter table public.vendedor_sessoes enable row level security;
+alter table public.vendas enable row level security;
+alter table public.venda_itens enable row level security;
+alter table public.configuracoes enable row level security;
+
+-- Recomeça as permissões do zero para os papéis usados pelo site.
+revoke all on public.admins, public.produtos, public.parcerias, public.vendedores,
+  public.vendedor_sessoes, public.vendas, public.venda_itens, public.configuracoes
+  from anon, authenticated;
+
+-- Produtos e parcerias: leitura pública dos ativos; admin gerencia tudo.
+grant select on public.produtos, public.parcerias to anon, authenticated;
+grant insert, update, delete on public.produtos, public.parcerias to authenticated;
+
+drop policy if exists produtos_leitura on public.produtos;
+create policy produtos_leitura on public.produtos for select
+  using (ativo or public.is_admin());
+drop policy if exists produtos_admin on public.produtos;
+create policy produtos_admin on public.produtos for all to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists parcerias_leitura on public.parcerias;
+create policy parcerias_leitura on public.parcerias for select
+  using (ativo or public.is_admin());
+drop policy if exists parcerias_admin on public.parcerias;
+create policy parcerias_admin on public.parcerias for all to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+
+-- Vendedores: só o admin lê (sem a coluna pin_hash). Criação/edição via RPC.
+grant select (id, nome, discord_id, ativo, criado_em, bloqueado_ate) on public.vendedores to authenticated;
+drop policy if exists vendedores_admin on public.vendedores;
+create policy vendedores_admin on public.vendedores for select to authenticated
+  using (public.is_admin());
+
+-- Vendas: só o admin lê e cancela. Registro somente pela função registrar_venda.
+grant select on public.vendas, public.venda_itens to authenticated;
+grant update (cancelada, cancelada_em) on public.vendas to authenticated;
+drop policy if exists vendas_admin_leitura on public.vendas;
+create policy vendas_admin_leitura on public.vendas for select to authenticated
+  using (public.is_admin());
+drop policy if exists vendas_admin_update on public.vendas;
+create policy vendas_admin_update on public.vendas for update to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+drop policy if exists venda_itens_admin on public.venda_itens;
+create policy venda_itens_admin on public.venda_itens for select to authenticated
+  using (public.is_admin());
+
+-- Configurações: só o admin.
+grant select, update on public.configuracoes to authenticated;
+drop policy if exists configuracoes_admin on public.configuracoes;
+create policy configuracoes_admin on public.configuracoes for all to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+
+-- Admins: cada um enxerga a própria linha (o site usa isso para saber se é admin).
+grant select on public.admins to authenticated;
+drop policy if exists admins_proprio on public.admins;
+create policy admins_proprio on public.admins for select to authenticated
+  using (user_id = auth.uid());
+
+-- -----------------------------------------------------------------------------
+-- Funções auxiliares
+-- -----------------------------------------------------------------------------
+
+create or replace function public._formatar_valor(p_valor numeric)
+returns text
+language sql stable
+as $$
+  select coalesce((select moeda from public.configuracoes where id = 1), 'R$ ')
+    || replace(to_char(round(coalesce(p_valor, 0)), 'FM999G999G999G990'), ',', '.');
+$$;
+
+-- Segunda-feira (fuso de Brasília) da semana que contém a data.
+create or replace function public._inicio_semana(p_data date)
+returns date
+language sql immutable
+as $$ select date_trunc('week', p_data)::date; $$;
+
+create or replace function public._vendedor_da_sessao(p_token text)
+returns public.vendedores
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  v public.vendedores;
+begin
+  select ve.* into v
+  from public.vendedor_sessoes s
+  join public.vendedores ve on ve.id = s.vendedor_id
+  where s.token = p_token and s.expira_em > now() and ve.ativo;
+  if not found then
+    raise exception 'SESSAO_INVALIDA' using hint = 'Entre novamente com seu PIN.';
+  end if;
+  return v;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Calculadora (papel anon)
+-- -----------------------------------------------------------------------------
+
+create or replace function public.listar_vendedores()
+returns table (id uuid, nome text)
+language sql stable security definer
+set search_path = public
+as $$
+  select id, nome from public.vendedores where ativo order by nome;
+$$;
+
+-- Confere o PIN e devolve um token de sessão. Após 5 erros, bloqueia por 15 min.
+create or replace function public.entrar_vendedor(p_vendedor_id uuid, p_pin text)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public, extensions
+as $$
+declare
+  v public.vendedores;
+  v_token text;
+begin
+  select * into v from public.vendedores where id = p_vendedor_id and ativo for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'erro', 'Vendedor não encontrado ou inativo.');
+  end if;
+
+  if v.bloqueado_ate is not null and v.bloqueado_ate > now() then
+    return jsonb_build_object('ok', false, 'erro',
+      'Muitas tentativas erradas. Tente de novo após ' || to_char(v.bloqueado_ate at time zone 'America/Sao_Paulo', 'HH24:MI') || '.');
+  end if;
+
+  if v.pin_hash <> crypt(coalesce(p_pin, ''), v.pin_hash) then
+    update public.vendedores
+       set tentativas_falhas = tentativas_falhas + 1,
+           bloqueado_ate = case when tentativas_falhas + 1 >= 5 then now() + interval '15 minutes' end
+     where id = v.id;
+    return jsonb_build_object('ok', false, 'erro', 'PIN incorreto.');
+  end if;
+
+  update public.vendedores set tentativas_falhas = 0, bloqueado_ate = null where id = v.id;
+  delete from public.vendedor_sessoes where expira_em < now();
+  insert into public.vendedor_sessoes (vendedor_id) values (v.id) returning token into v_token;
+
+  return jsonb_build_object('ok', true, 'token', v_token, 'id', v.id, 'nome', v.nome);
+end;
+$$;
+
+create or replace function public.sair_vendedor(p_token text)
+returns void
+language sql volatile security definer
+set search_path = public
+as $$ delete from public.vendedor_sessoes where token = p_token; $$;
+
+-- Monta e envia (de forma assíncrona) o aviso de venda para o Discord.
+create or replace function public._notificar_venda(p_venda_id uuid)
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  c public.configuracoes;
+  v public.vendas;
+  v_discord text;
+  v_itens text;
+  v_campos jsonb;
+  v_corpo jsonb;
+begin
+  select * into c from public.configuracoes where id = 1;
+  if not c.notificar_vendas or coalesce(c.webhook_vendas, '') = '' then
+    return;
+  end if;
+
+  select * into v from public.vendas where id = p_venda_id;
+  select discord_id into v_discord from public.vendedores where id = v.vendedor_id;
+
+  select string_agg(coalesce(icone || ' ', '') || '**' || produto_nome || '** x' || quantidade
+                    || ' — ' || public._formatar_valor(subtotal), E'\n' order by id)
+    into v_itens
+    from public.venda_itens where venda_id = v.id;
+
+  v_campos := jsonb_build_array(
+    jsonb_build_object('name', 'Vendedor', 'value', v.vendedor_nome, 'inline', true),
+    jsonb_build_object('name', 'Tipo de venda', 'value',
+      case when v.com_parceria then 'Com parceria' else 'Pista' end, 'inline', true)
+  );
+  if v.com_parceria then
+    v_campos := v_campos || jsonb_build_object('name', 'Parceria', 'value', coalesce(v.parceria_nome, '—'), 'inline', true);
+  end if;
+  if coalesce(v.cliente, '') <> '' then
+    v_campos := v_campos || jsonb_build_object('name', 'Cliente', 'value', v.cliente, 'inline', true);
+  end if;
+  v_campos := v_campos || jsonb_build_array(
+    jsonb_build_object('name', 'Itens', 'value', left(coalesce(v_itens, '—'), 1024)),
+    jsonb_build_object('name', 'Total', 'value', '**' || public._formatar_valor(v.total) || '**', 'inline', true),
+    jsonb_build_object('name', 'Comissão', 'value', public._formatar_valor(v.comissao), 'inline', true)
+  );
+  if coalesce(v.observacao, '') <> '' then
+    v_campos := v_campos || jsonb_build_object('name', 'Observação', 'value', left(v.observacao, 1024));
+  end if;
+
+  v_corpo := jsonb_build_object(
+    'username', c.nome_organizacao || ' — Vendas',
+    'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb),
+    'embeds', jsonb_build_array(jsonb_build_object(
+      'title', '🐉 Venda #' || v.numero,
+      'color', 2001125,
+      'fields', v_campos,
+      'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao),
+      'timestamp', to_char(v.criado_em at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+    ))
+  );
+
+  -- Marca o vendedor (em spoiler, discreto) se ele tiver ID do Discord.
+  if v_discord is not null then
+    v_corpo := v_corpo || jsonb_build_object(
+      'content', '||<@' || v_discord || '>||',
+      'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb, 'users', jsonb_build_array(v_discord))
+    );
+  end if;
+
+  perform net.http_post(url := c.webhook_vendas, body := v_corpo);
+exception when others then
+  -- Falha no Discord nunca deve impedir o registro da venda.
+  raise warning 'Falha ao notificar venda %: %', p_venda_id, sqlerrm;
+end;
+$$;
+
+-- Versão antiga (sem cliente), caso o script já tenha sido rodado antes.
+drop function if exists public.registrar_venda(text, jsonb, uuid, text);
+
+-- Registra a venda. Preços, comissão e craft são sempre calculados aqui, a partir
+-- da tabela produtos, para que ninguém consiga alterar valores pelo navegador.
+-- p_itens: [{ "produto_id": "uuid", "quantidade": 3 }, ...]
+create or replace function public.registrar_venda(
+  p_token text,
+  p_itens jsonb,
+  p_parceria_id uuid default null,
+  p_cliente text default null,
+  p_observacao text default null
+)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_vendedor public.vendedores;
+  v_parceria public.parcerias;
+  v_com boolean := p_parceria_id is not null;
+  v_pct numeric := coalesce((select percentual_comissao from public.configuracoes where id = 1), 0.15);
+  v_id uuid;
+  v_numero bigint;
+  v_total numeric(12, 2);
+  v_comissao numeric(12, 2);
+  v_linhas jsonb;
+  v_esperados int;
+begin
+  v_vendedor := public._vendedor_da_sessao(p_token);
+
+  if v_com then
+    select * into v_parceria from public.parcerias where id = p_parceria_id and ativo;
+    if not found then
+      raise exception 'Parceria não encontrada ou inativa.';
+    end if;
+  end if;
+
+  if p_itens is null or jsonb_typeof(p_itens) <> 'array' then
+    raise exception 'Lista de itens inválida.';
+  end if;
+
+  select coalesce(jsonb_agg(x), '[]'::jsonb),
+         coalesce(sum(x.quantidade * x.preco), 0),
+         coalesce(sum(x.comissao), 0)
+    into v_linhas, v_total, v_comissao
+  from (
+    select p.id as produto_id, p.nome, p.icone, sum(i.quantidade)::int as quantidade,
+           case when v_com then p.preco_com_parceria else p.preco_sem_parceria end as preco,
+           round(sum(i.quantidade) * p.preco_com_parceria * v_pct, 2) as comissao,
+           sum(i.quantidade)::int * p.craft_placa as craft_placa,
+           sum(i.quantidade)::int * p.craft_material as craft_material,
+           p.material_nome
+    from jsonb_to_recordset(p_itens) as i (produto_id uuid, quantidade int)
+    join public.produtos p on p.id = i.produto_id and p.ativo
+    where i.quantidade > 0
+    group by p.id
+  ) x;
+
+  select count(distinct i.produto_id) into v_esperados
+  from jsonb_to_recordset(p_itens) as i (produto_id uuid, quantidade int)
+  where i.quantidade > 0;
+
+  if v_esperados = 0 then
+    raise exception 'Adicione pelo menos um item.';
+  end if;
+  if jsonb_array_length(v_linhas) <> v_esperados then
+    raise exception 'Algum produto da venda não está mais disponível. Recarregue a página.';
+  end if;
+
+  insert into public.vendas (vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao)
+  values (v_vendedor.id, v_vendedor.nome, v_parceria.id, v_parceria.nome, v_com,
+          nullif(left(trim(coalesce(p_cliente, '')), 60), ''),
+          v_total, v_comissao,
+          nullif(left(trim(coalesce(p_observacao, '')), 300), ''))
+  returning id, numero into v_id, v_numero;
+
+  insert into public.venda_itens (venda_id, produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal,
+                                  comissao, craft_placa, craft_material, material_nome)
+  select v_id, l.produto_id, l.nome, l.icone, l.quantidade, l.preco, l.quantidade * l.preco,
+         l.comissao, l.craft_placa, l.craft_material, l.material_nome
+  from jsonb_to_recordset(v_linhas) as l (produto_id uuid, nome text, icone text, quantidade int, preco numeric,
+                                          comissao numeric, craft_placa int, craft_material int, material_nome text)
+  order by l.nome;
+
+  perform public._notificar_venda(v_id);
+
+  return jsonb_build_object('id', v_id, 'numero', v_numero, 'total', v_total, 'comissao', v_comissao);
+end;
+$$;
+
+-- Resumo da semana atual do próprio vendedor (mostrado na calculadora).
+create or replace function public.minha_semana(p_token text)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  v_vendedor public.vendedores;
+  v_inicio timestamptz := (public._inicio_semana((now() at time zone 'America/Sao_Paulo')::date))::timestamp at time zone 'America/Sao_Paulo';
+  v_res jsonb;
+begin
+  v_vendedor := public._vendedor_da_sessao(p_token);
+  select jsonb_build_object('quantidade', count(*), 'total', coalesce(sum(total), 0), 'comissao', coalesce(sum(comissao), 0))
+    into v_res
+    from public.vendas
+   where vendedor_id = v_vendedor.id and not cancelada and criado_em >= v_inicio;
+  return v_res;
+end;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- Painel administrativo (papel authenticated + admin)
+-- -----------------------------------------------------------------------------
+
+create or replace function public.salvar_vendedor(
+  p_id uuid,
+  p_nome text,
+  p_discord_id text,
+  p_ativo boolean,
+  p_pin text default null
+)
+returns uuid
+language plpgsql volatile security definer
+set search_path = public, extensions
+as $$
+declare
+  v_id uuid;
+  v_discord text := nullif(trim(coalesce(p_discord_id, '')), '');
+  v_pin text := nullif(trim(coalesce(p_pin, '')), '');
+begin
+  if not public.is_admin() then
+    raise exception 'Acesso negado.';
+  end if;
+  if v_pin is not null and v_pin !~ '^\d{4,8}$' then
+    raise exception 'O PIN deve ter de 4 a 8 números.';
+  end if;
+
+  if p_id is null then
+    if v_pin is null then
+      raise exception 'Defina um PIN para o novo vendedor.';
+    end if;
+    insert into public.vendedores (nome, discord_id, ativo, pin_hash)
+    values (trim(p_nome), v_discord, coalesce(p_ativo, true), crypt(v_pin, gen_salt('bf')))
+    returning id into v_id;
+  else
+    update public.vendedores
+       set nome = trim(p_nome),
+           discord_id = v_discord,
+           ativo = coalesce(p_ativo, ativo),
+           pin_hash = case when v_pin is null then pin_hash else crypt(v_pin, gen_salt('bf')) end,
+           tentativas_falhas = case when v_pin is null then tentativas_falhas else 0 end,
+           bloqueado_ate = case when v_pin is null then bloqueado_ate end
+     where id = p_id
+     returning id into v_id;
+    if v_id is null then
+      raise exception 'Vendedor não encontrado.';
+    end if;
+    -- PIN trocado ou vendedor desativado: derruba as sessões abertas.
+    if v_pin is not null or p_ativo is false then
+      delete from public.vendedor_sessoes where vendedor_id = v_id;
+    end if;
+  end if;
+  return v_id;
+end;
+$$;
+
+-- Relatório de um período (por padrão, a semana de segunda a domingo).
+create or replace function public._relatorio(p_inicio date, p_fim date)
+returns jsonb
+language sql stable security definer
+set search_path = public
+as $$
+  with periodo as (
+    select (p_inicio::timestamp at time zone 'America/Sao_Paulo') as ini,
+           ((p_fim + 1)::timestamp at time zone 'America/Sao_Paulo') as fim
+  ),
+  v as (
+    select ve.* from public.vendas ve, periodo
+    where not ve.cancelada and ve.criado_em >= periodo.ini and ve.criado_em < periodo.fim
+  )
+  select jsonb_build_object(
+    'inicio', p_inicio,
+    'fim', p_fim,
+    'quantidade', (select count(*) from v),
+    'total', (select coalesce(sum(total), 0) from v),
+    'total_com_parceria', (select coalesce(sum(total), 0) from v where com_parceria),
+    'total_sem_parceria', (select coalesce(sum(total), 0) from v where not com_parceria),
+    'comissao', (select coalesce(sum(comissao), 0) from v),
+    'percentual_comissao', (select percentual_comissao from public.configuracoes where id = 1),
+    'por_vendedor', coalesce((
+      select jsonb_agg(x order by x.total desc) from (
+        select vendedor_nome as nome, count(*) as quantidade, sum(total) as total, sum(comissao) as comissao
+        from v group by vendedor_id, vendedor_nome
+      ) x), '[]'::jsonb),
+    'por_parceria', coalesce((
+      select jsonb_agg(x order by x.total desc) from (
+        select coalesce(parceria_nome, 'Pista (sem parceria)') as nome, count(*) as quantidade, sum(total) as total
+        from v group by coalesce(parceria_nome, 'Pista (sem parceria)')
+      ) x), '[]'::jsonb),
+    'por_produto', coalesce((
+      select jsonb_agg(x order by x.total desc) from (
+        select i.produto_nome as nome, max(i.icone) as icone, sum(i.quantidade) as quantidade, sum(i.subtotal) as total,
+               sum(i.craft_placa) as craft_placa, sum(i.craft_material) as craft_material, max(i.material_nome) as material_nome
+        from public.venda_itens i join v on v.id = i.venda_id
+        group by i.produto_nome
+      ) x), '[]'::jsonb),
+    'craft', coalesce((
+      select jsonb_agg(x order by x.nome) from (
+        select 'Placa' as nome, sum(i.craft_placa) as quantidade
+        from public.venda_itens i join v on v.id = i.venda_id
+        having sum(i.craft_placa) > 0
+        union all
+        select coalesce(i.material_nome, 'Material'), sum(i.craft_material)
+        from public.venda_itens i join v on v.id = i.venda_id
+        group by coalesce(i.material_nome, 'Material')
+        having sum(i.craft_material) > 0
+      ) x), '[]'::jsonb)
+  );
+$$;
+
+create or replace function public.relatorio_periodo(p_inicio date, p_fim date)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Acesso negado.';
+  end if;
+  return public._relatorio(p_inicio, p_fim);
+end;
+$$;
+
+create or replace function public._linhas_relatorio(p_lista jsonb, p_com_icone boolean default false)
+returns text
+language sql stable
+as $$
+  select coalesce(left(string_agg(
+           (case when p_com_icone and e->>'icone' is not null then e->>'icone' || ' ' else '' end)
+           || '**' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'total')::numeric)
+           || ' (' || (e->>'quantidade') || ')', E'\n' order by ord), 1024), '—')
+  from jsonb_array_elements(p_lista) with ordinality as t (e, ord)
+  where ord <= 15;
+$$;
+
+-- Envia o relatório da semana que começa em p_inicio para o webhook de relatórios.
+create or replace function public._enviar_relatorio(p_inicio date)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  c public.configuracoes;
+  v_ini date := public._inicio_semana(p_inicio);
+  r jsonb;
+  v_url text;
+begin
+  select * into c from public.configuracoes where id = 1;
+  v_url := coalesce(nullif(c.webhook_relatorios, ''), nullif(c.webhook_vendas, ''));
+  if v_url is null then
+    raise exception 'Nenhum webhook do Discord configurado.';
+  end if;
+
+  r := public._relatorio(v_ini, v_ini + 6);
+
+  perform net.http_post(url := v_url, body := jsonb_build_object(
+    'username', c.nome_organizacao || ' — Relatórios',
+    'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb),
+    'embeds', jsonb_build_array(jsonb_build_object(
+      'title', '📊 Relatório semanal — ' || to_char(v_ini, 'DD/MM') || ' a ' || to_char(v_ini + 6, 'DD/MM/YYYY'),
+      'color', 2001125,
+      'fields', jsonb_build_array(
+        jsonb_build_object('name', 'Total vendido', 'value', '**' || public._formatar_valor((r->>'total')::numeric) || '**', 'inline', true),
+        jsonb_build_object('name', 'Vendas', 'value', r->>'quantidade', 'inline', true),
+        jsonb_build_object('name', 'Ticket médio', 'value',
+          public._formatar_valor(case when (r->>'quantidade')::int > 0 then (r->>'total')::numeric / (r->>'quantidade')::int else 0 end), 'inline', true),
+        jsonb_build_object('name', 'Com parceria', 'value', public._formatar_valor((r->>'total_com_parceria')::numeric), 'inline', true),
+        jsonb_build_object('name', 'Pista', 'value', public._formatar_valor((r->>'total_sem_parceria')::numeric), 'inline', true),
+        jsonb_build_object('name', 'Comissões', 'value', public._formatar_valor((r->>'comissao')::numeric), 'inline', true),
+        jsonb_build_object('name', '🏆 Vendedores', 'value', public._linhas_relatorio(r->'por_vendedor')),
+        jsonb_build_object('name', '💰 Pagamento (' || round((r->>'percentual_comissao')::numeric * 100) || '%)', 'value', coalesce((
+          select left(string_agg('**' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'comissao')::numeric), E'\n' order by ord), 1024)
+          from jsonb_array_elements(r->'por_vendedor') with ordinality as t (e, ord) where ord <= 20), '—')),
+        jsonb_build_object('name', '🤝 Parcerias', 'value', public._linhas_relatorio(r->'por_parceria')),
+        jsonb_build_object('name', '📦 Produtos', 'value', public._linhas_relatorio(r->'por_produto', true)),
+        jsonb_build_object('name', '🔧 Craft usado', 'value', coalesce((
+          select string_agg((e->>'nome') || ': **' || (e->>'quantidade') || '**', ' · ')
+          from jsonb_array_elements(r->'craft') e), '—'))
+      ),
+      'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao),
+      'timestamp', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+    ))
+  ));
+  return r;
+end;
+$$;
+
+create or replace function public.enviar_relatorio_discord(p_inicio date)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Acesso negado.';
+  end if;
+  return public._enviar_relatorio(p_inicio);
+end;
+$$;
+
+-- Usado pelo agendamento: envia o relatório da semana anterior.
+create or replace function public._relatorio_automatico()
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if (select relatorio_automatico from public.configuracoes where id = 1) then
+    perform public._enviar_relatorio(((now() at time zone 'America/Sao_Paulo')::date - 7));
+  end if;
+end;
+$$;
+
+-- Testa o webhook informado (botão "Testar" nas configurações).
+create or replace function public.testar_webhook(p_url text)
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Acesso negado.';
+  end if;
+  if p_url !~ '^https://(canary\.|ptb\.)?(discord|discordapp)\.com/api/webhooks/' then
+    raise exception 'URL de webhook do Discord inválida.';
+  end if;
+  perform net.http_post(url := p_url, body := jsonb_build_object(
+    'username', (select nome_organizacao from public.configuracoes where id = 1) || ' — Teste',
+    'content', '✅ Webhook configurado com sucesso na calculadora.'
+  ));
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Permissões de execução das funções
+-- -----------------------------------------------------------------------------
+
+revoke execute on all functions in schema public from public, anon, authenticated;
+
+grant execute on function public.is_admin() to anon, authenticated;
+grant execute on function public.listar_vendedores() to anon, authenticated;
+grant execute on function public.entrar_vendedor(uuid, text) to anon, authenticated;
+grant execute on function public.sair_vendedor(text) to anon, authenticated;
+grant execute on function public.registrar_venda(text, jsonb, uuid, text, text) to anon, authenticated;
+grant execute on function public.minha_semana(text) to anon, authenticated;
+grant execute on function public.salvar_vendedor(uuid, text, text, boolean, text) to authenticated;
+grant execute on function public.relatorio_periodo(date, date) to authenticated;
+grant execute on function public.enviar_relatorio_discord(date) to authenticated;
+grant execute on function public.testar_webhook(text) to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- Agendamento: relatório semanal toda segunda às 09:00 (horário de Brasília).
+-- -----------------------------------------------------------------------------
+
+select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-relatorio-semanal';
+select cron.schedule('bluedragons-relatorio-semanal', '0 12 * * 1', 'select public._relatorio_automatico()');
