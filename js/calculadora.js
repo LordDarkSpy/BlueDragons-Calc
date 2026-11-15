@@ -2,8 +2,6 @@
   const { db, esc, formatarValor } = BD;
   const $ = (id) => document.getElementById(id);
 
-  const CHAVE_SESSAO = 'bluedragons-sessao';
-
   const els = {
     principal: $('principal'),
     listaItens: $('lista-itens'),
@@ -24,12 +22,7 @@
     trocarVendedor: $('trocar-vendedor'),
     minhaSemana: $('minha-semana'),
     modalVendedor: $('modal-vendedor'),
-    formVendedor: $('form-vendedor'),
-    selectVendedor: $('select-vendedor'),
-    inputPin: $('input-pin'),
     erroVendedor: $('modal-vendedor-erro'),
-    entrar: $('entrar'),
-    cancelarVendedor: $('cancelar-vendedor'),
     modalSucesso: $('modal-sucesso'),
     sucessoTotal: $('sucesso-total'),
     sucessoDetalhe: $('sucesso-detalhe'),
@@ -45,38 +38,20 @@
 
   let produtos = [];
   let parcerias = [];
-  let sessao = lerSessao(); // { token, id, nome }
+  let sessao = null; // { id, nome } do vendedor logado
   let comParceria = false;
   let totalAtual = 0;
   let totalSucesso = 0;
   const quantidades = {};
 
-  // ---------------------------------------------------------------- sessão
-
-  function lerSessao() {
-    try { return JSON.parse(BD.lerSalvo(CHAVE_SESSAO)) || null; } catch (e) { return null; }
-  }
+  // ---------------------------------------------------------------- sessão (Discord)
 
   function definirSessao(nova) {
     sessao = nova;
-    BD.salvar(CHAVE_SESSAO, nova ? JSON.stringify(nova) : '');
-    els.vendedorNome.textContent = nova ? nova.nome : '—';
-    els.trocarVendedor.textContent = nova ? 'Trocar' : 'Entrar';
+    els.vendedorNome.textContent = nova ? nova.nome : "—";
+    els.trocarVendedor.textContent = nova ? "Sair" : "Entrar";
     if (nova) atualizarMinhaSemana();
     else els.minhaSemana.hidden = true;
-  }
-
-  async function carregarVendedores() {
-    const { data, error } = await db.rpc('listar_vendedores');
-    if (error) {
-      els.selectVendedor.innerHTML = '<option value="">Erro ao carregar</option>';
-      mostrarErroVendedor(BD.mensagemErro(error));
-      return;
-    }
-    els.selectVendedor.innerHTML = data.length
-      ? '<option value="">Selecione seu nome…</option>' + data.map((v) => `<option value="${esc(v.id)}">${esc(v.nome)}</option>`).join('')
-      : '<option value="">Nenhum vendedor cadastrado</option>';
-    if (sessao) els.selectVendedor.value = sessao.id;
   }
 
   function mostrarErroVendedor(texto) {
@@ -84,56 +59,66 @@
     els.erroVendedor.hidden = !texto;
   }
 
-  function abrirModalVendedor() {
-    mostrarErroVendedor('');
-    els.inputPin.value = '';
-    els.cancelarVendedor.hidden = !sessao;
-    carregarVendedores();
-    BD.abrirModal(els.modalVendedor, els.selectVendedor);
+  function abrirModalVendedor(perfil) {
+    const naoCadastrado = !!(perfil && !perfil.cadastrado);
+    $("login-entrar-bloco").hidden = naoCadastrado;
+    $("login-nao-cadastrado").hidden = !naoCadastrado;
+    if (naoCadastrado) $("meu-discord-id").value = perfil.discord_id || "";
+    BD.abrirModal(els.modalVendedor, naoCadastrado ? $("copiar-discord-id") : $("entrar-discord"));
   }
 
-  els.formVendedor.addEventListener('submit', async (evento) => {
-    evento.preventDefault();
-    const id = els.selectVendedor.value;
-    const pin = els.inputPin.value.trim();
-    if (!id) return mostrarErroVendedor('Selecione seu nome.');
-    if (!/^\d{4,8}$/.test(pin)) return mostrarErroVendedor('O PIN tem de 4 a 8 números.');
-
-    els.entrar.disabled = true;
-    els.entrar.textContent = '⏳ Entrando…';
-    const { data, error } = await db.rpc('entrar_vendedor', { p_vendedor_id: id, p_pin: pin });
-    els.entrar.disabled = false;
-    els.entrar.textContent = 'Entrar';
-
-    if (error) return mostrarErroVendedor(BD.mensagemErro(error));
-    if (!data.ok) {
-      els.inputPin.value = '';
-      els.inputPin.focus();
-      return mostrarErroVendedor(data.erro);
+  async function verificarLogin() {
+    let perfil;
+    try {
+      perfil = await BD.perfil();
+    } catch (erro) {
+      definirSessao(null);
+      abrirModalVendedor(null);
+      return mostrarErroVendedor(BD.mensagemErro(erro));
     }
-    if (sessao && sessao.token !== data.token) db.rpc('sair_vendedor', { p_token: sessao.token });
-    definirSessao({ token: data.token, id: data.id, nome: data.nome });
-    BD.fecharModal(els.modalVendedor);
+    if (perfil && perfil.cadastrado) {
+      definirSessao({ id: perfil.id, nome: perfil.nome });
+      mostrarErroVendedor("");
+      BD.fecharModal(els.modalVendedor);
+    } else {
+      definirSessao(null);
+      abrirModalVendedor(perfil);
+    }
+  }
+
+  $("entrar-discord").addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = "⏳ Abrindo o Discord…";
+    try {
+      await BD.entrarComDiscord();
+    } catch (erro) {
+      e.target.disabled = false;
+      e.target.textContent = "Entrar com Discord";
+      mostrarErroVendedor(BD.mensagemErro(erro));
+    }
   });
 
-  els.inputPin.addEventListener('input', () => {
-    els.inputPin.value = els.inputPin.value.replace(/\D/g, '');
-  });
+  async function sair() {
+    await db.auth.signOut();
+    definirSessao(null);
+    abrirModalVendedor(null);
+  }
 
-  els.trocarVendedor.addEventListener('click', abrirModalVendedor);
-  els.cancelarVendedor.addEventListener('click', () => BD.fecharModal(els.modalVendedor));
+  $("sair-nao-cadastrado").addEventListener("click", sair);
+  $("tentar-novamente").addEventListener("click", verificarLogin);
+  $("copiar-discord-id").addEventListener("click", (e) => {
+    BD.copiar($("meu-discord-id").value).then(() => { e.target.textContent = "✅ ID copiado!"; });
+  });
+  els.trocarVendedor.addEventListener("click", () => (sessao ? sair() : abrirModalVendedor(null)));
 
   async function atualizarMinhaSemana() {
     if (!sessao) return;
-    const { data, error } = await db.rpc('minha_semana', { p_token: sessao.token });
+    const { data, error } = await db.rpc("minha_semana");
     if (error) {
-      if (/SESSAO_INVALIDA/.test(error.message)) {
-        definirSessao(null);
-        abrirModalVendedor();
-      }
+      if (/NAO_CADASTRADO|JWT/.test(error.message)) verificarLogin();
       return;
     }
-    els.minhaSemana.textContent = `Sua semana: ${data.quantidade} venda${data.quantidade === 1 ? '' : 's'} · ${formatarValor(data.total)} · comissão ${formatarValor(data.comissao)}`;
+    els.minhaSemana.textContent = `Sua semana: ${data.quantidade} venda${data.quantidade === 1 ? "" : "s"} · ${formatarValor(data.total)} · comissão ${formatarValor(data.comissao)}`;
     els.minhaSemana.hidden = false;
   }
 
@@ -283,7 +268,7 @@
 
   els.registrar.addEventListener('click', async () => {
     mostrarStatus('', '');
-    if (!sessao) return abrirModalVendedor();
+    if (!sessao) return abrirModalVendedor(null);
     if (totalAtual <= 0 && !selecionados().length) return mostrarStatus('Adicione pelo menos um item antes de registrar.', 'erro');
     if (comParceria && !els.selectParceria.value) {
       els.selectParceria.classList.add('invalido');
@@ -297,7 +282,6 @@
     els.registrar.disabled = true;
     els.registrar.textContent = '⏳ Registrando…';
     const { data, error } = await db.rpc('registrar_venda', {
-      p_token: sessao.token,
       p_itens: itens,
       p_parceria_id: comParceria ? els.selectParceria.value : null,
       p_cliente: els.cliente.value.trim() || null,
@@ -308,7 +292,7 @@
 
     if (error) {
       mostrarStatus(`Não foi possível registrar a venda: ${BD.mensagemErro(error)}`, 'erro');
-      if (/SESSAO_INVALIDA/.test(error.message)) { definirSessao(null); abrirModalVendedor(); }
+      if (/NAO_CADASTRADO|JWT/.test(error.message)) verificarLogin();
       if (/não está mais disponível/.test(error.message)) carregarCatalogo();
       return;
     }
@@ -331,7 +315,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!els.modalSucesso.hidden) BD.fecharModal(els.modalSucesso);
-    else if (!els.modalVendedor.hidden && sessao) BD.fecharModal(els.modalVendedor);
+    
   });
 
   // ---------------------------------------------------------------- tabela de preços
@@ -368,7 +352,8 @@
     atualizarResumo();
   }
 
-  definirSessao(sessao);
   carregarCatalogo();
-  if (!sessao) abrirModalVendedor();
+  const erroLogin = BD.erroDoLogin();
+  verificarLogin().then(() => { if (erroLogin) mostrarErroVendedor('O Discord não completou o login: ' + erroLogin); });
+  db.auth.onAuthStateChange((evento) => { if (evento === 'SIGNED_IN' && !sessao) verificarLogin(); });
 })();

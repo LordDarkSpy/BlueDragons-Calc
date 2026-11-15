@@ -43,24 +43,33 @@ create table if not exists public.parcerias (
   criado_em timestamptz not null default now()
 );
 
+-- Vendedores e administradores. O login é feito com o Discord: a pessoa é
+-- reconhecida pelo ID do Discord cadastrado aqui.
 create table if not exists public.vendedores (
   id uuid primary key default gen_random_uuid(),
   nome text not null check (length(trim(nome)) between 2 and 40),
-  discord_id text check (discord_id is null or discord_id ~ '^\d{17,20}$'),
-  pin_hash text not null,
+  discord_id text not null check (discord_id ~ '^\d{17,20}$'),
+  admin boolean not null default false,
   ativo boolean not null default true,
-  tentativas_falhas int not null default 0,
-  bloqueado_ate timestamptz,
   criado_em timestamptz not null default now()
 );
 
--- Sessões dos vendedores na calculadora (criadas ao digitar o PIN).
-create table if not exists public.vendedor_sessoes (
-  token text primary key default encode(extensions.gen_random_bytes(24), 'hex'),
-  vendedor_id uuid not null references public.vendedores (id) on delete cascade,
-  criado_em timestamptz not null default now(),
-  expira_em timestamptz not null default now() + interval '30 days'
-);
+-- Migração da versão com PIN (o login agora é pelo Discord).
+alter table public.vendedores add column if not exists admin boolean not null default false;
+alter table public.vendedores drop column if exists pin_hash;
+alter table public.vendedores drop column if exists tentativas_falhas;
+alter table public.vendedores drop column if exists bloqueado_ate;
+alter table public.vendedores alter column discord_id set not null;
+create unique index if not exists vendedores_discord_id_idx on public.vendedores (discord_id);
+drop function if exists public.listar_vendedores();
+drop function if exists public.entrar_vendedor(uuid, text);
+drop function if exists public.sair_vendedor(text);
+drop function if exists public.registrar_venda(text, jsonb, uuid, text, text);
+drop function if exists public.registrar_venda(text, jsonb, uuid, text);
+drop function if exists public.minha_semana(text);
+drop function if exists public.salvar_vendedor(uuid, text, text, boolean, text);
+drop function if exists public._vendedor_da_sessao(text);
+drop table if exists public.vendedor_sessoes;
 
 create table if not exists public.vendas (
   id uuid primary key default gen_random_uuid(),
@@ -134,26 +143,49 @@ where not exists (select 1 from public.produtos);
 -- Permissões e RLS
 -- -----------------------------------------------------------------------------
 
+-- ID do Discord do usuário logado. Vem de auth.identities, que é preenchida pelo
+-- próprio Supabase no login (os metadados do usuário não são usados porque o
+-- usuário consegue editá-los).
+create or replace function public._discord_id()
+returns text
+language sql stable security definer
+set search_path = public
+as $$
+  select provider_id from auth.identities
+  where user_id = auth.uid() and provider = 'discord'
+  limit 1;
+$$;
+
+-- Cadastro (ativo) do usuário logado, ou nulo se ele não estiver cadastrado.
+create or replace function public._vendedor_atual()
+returns public.vendedores
+language sql stable security definer
+set search_path = public
+as $$
+  select * from public.vendedores
+  where ativo and discord_id = public._discord_id();
+$$;
+
 create or replace function public.is_admin()
 returns boolean
 language sql stable security definer
 set search_path = public
 as $$
-  select exists (select 1 from public.admins where user_id = auth.uid());
+  select exists (select 1 from public.admins where user_id = auth.uid())
+      or coalesce((public._vendedor_atual()).admin, false);
 $$;
 
 alter table public.admins enable row level security;
 alter table public.produtos enable row level security;
 alter table public.parcerias enable row level security;
 alter table public.vendedores enable row level security;
-alter table public.vendedor_sessoes enable row level security;
 alter table public.vendas enable row level security;
 alter table public.venda_itens enable row level security;
 alter table public.configuracoes enable row level security;
 
 -- Recomeça as permissões do zero para os papéis usados pelo site.
 revoke all on public.admins, public.produtos, public.parcerias, public.vendedores,
-  public.vendedor_sessoes, public.vendas, public.venda_itens, public.configuracoes
+  public.vendas, public.venda_itens, public.configuracoes
   from anon, authenticated;
 
 -- Produtos e parcerias: leitura pública dos ativos; admin gerencia tudo.
@@ -174,8 +206,8 @@ drop policy if exists parcerias_admin on public.parcerias;
 create policy parcerias_admin on public.parcerias for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
 
--- Vendedores: só o admin lê (sem a coluna pin_hash). Criação/edição via RPC.
-grant select (id, nome, discord_id, ativo, criado_em, bloqueado_ate) on public.vendedores to authenticated;
+-- Vendedores: só o admin lê. Criação/edição via RPC salvar_vendedor.
+grant select (id, nome, discord_id, admin, ativo, criado_em) on public.vendedores to authenticated;
 drop policy if exists vendedores_admin on public.vendedores;
 create policy vendedores_admin on public.vendedores for select to authenticated
   using (public.is_admin());
@@ -223,78 +255,41 @@ returns date
 language sql immutable
 as $$ select date_trunc('week', p_data)::date; $$;
 
-create or replace function public._vendedor_da_sessao(p_token text)
+-- Vendedor logado; erro NAO_CADASTRADO se o Discord dele não estiver cadastrado.
+create or replace function public._exigir_vendedor()
 returns public.vendedores
 language plpgsql stable security definer
 set search_path = public
 as $$
 declare
-  v public.vendedores;
+  v public.vendedores := public._vendedor_atual();
 begin
-  select ve.* into v
-  from public.vendedor_sessoes s
-  join public.vendedores ve on ve.id = s.vendedor_id
-  where s.token = p_token and s.expira_em > now() and ve.ativo;
-  if not found then
-    raise exception 'SESSAO_INVALIDA' using hint = 'Entre novamente com seu PIN.';
+  if v.id is null then
+    raise exception 'NAO_CADASTRADO' using hint = 'Peça a um administrador para cadastrar seu ID do Discord.';
   end if;
   return v;
 end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- Calculadora (papel anon)
+-- Calculadora (usuário logado com o Discord)
 -- -----------------------------------------------------------------------------
 
-create or replace function public.listar_vendedores()
-returns table (id uuid, nome text)
+-- Quem é o usuário logado: usado pelo site logo após o login.
+create or replace function public.meu_perfil()
+returns jsonb
 language sql stable security definer
 set search_path = public
 as $$
-  select id, nome from public.vendedores where ativo order by nome;
+  select jsonb_build_object(
+    'discord_id', public._discord_id(),
+    'cadastrado', v.id is not null,
+    'id', v.id,
+    'nome', v.nome,
+    'admin', public.is_admin()
+  )
+  from (select (public._vendedor_atual()).*) v;
 $$;
-
--- Confere o PIN e devolve um token de sessão. Após 5 erros, bloqueia por 15 min.
-create or replace function public.entrar_vendedor(p_vendedor_id uuid, p_pin text)
-returns jsonb
-language plpgsql volatile security definer
-set search_path = public, extensions
-as $$
-declare
-  v public.vendedores;
-  v_token text;
-begin
-  select * into v from public.vendedores where id = p_vendedor_id and ativo for update;
-  if not found then
-    return jsonb_build_object('ok', false, 'erro', 'Vendedor não encontrado ou inativo.');
-  end if;
-
-  if v.bloqueado_ate is not null and v.bloqueado_ate > now() then
-    return jsonb_build_object('ok', false, 'erro',
-      'Muitas tentativas erradas. Tente de novo após ' || to_char(v.bloqueado_ate at time zone 'America/Sao_Paulo', 'HH24:MI') || '.');
-  end if;
-
-  if v.pin_hash <> crypt(coalesce(p_pin, ''), v.pin_hash) then
-    update public.vendedores
-       set tentativas_falhas = tentativas_falhas + 1,
-           bloqueado_ate = case when tentativas_falhas + 1 >= 5 then now() + interval '15 minutes' end
-     where id = v.id;
-    return jsonb_build_object('ok', false, 'erro', 'PIN incorreto.');
-  end if;
-
-  update public.vendedores set tentativas_falhas = 0, bloqueado_ate = null where id = v.id;
-  delete from public.vendedor_sessoes where expira_em < now();
-  insert into public.vendedor_sessoes (vendedor_id) values (v.id) returning token into v_token;
-
-  return jsonb_build_object('ok', true, 'token', v_token, 'id', v.id, 'nome', v.nome);
-end;
-$$;
-
-create or replace function public.sair_vendedor(p_token text)
-returns void
-language sql volatile security definer
-set search_path = public
-as $$ delete from public.vendedor_sessoes where token = p_token; $$;
 
 -- Monta e envia (de forma assíncrona) o aviso de venda para o Discord.
 create or replace function public._notificar_venda(p_venda_id uuid)
@@ -370,14 +365,11 @@ exception when others then
 end;
 $$;
 
--- Versão antiga (sem cliente), caso o script já tenha sido rodado antes.
-drop function if exists public.registrar_venda(text, jsonb, uuid, text);
-
--- Registra a venda. Preços, comissão e craft são sempre calculados aqui, a partir
--- da tabela produtos, para que ninguém consiga alterar valores pelo navegador.
+-- Registra a venda em nome do usuário logado. Preços, comissão e craft são sempre
+-- calculados aqui, a partir da tabela produtos, para que ninguém consiga alterar
+-- valores pelo navegador.
 -- p_itens: [{ "produto_id": "uuid", "quantidade": 3 }, ...]
 create or replace function public.registrar_venda(
-  p_token text,
   p_itens jsonb,
   p_parceria_id uuid default null,
   p_cliente text default null,
@@ -399,7 +391,7 @@ declare
   v_linhas jsonb;
   v_esperados int;
 begin
-  v_vendedor := public._vendedor_da_sessao(p_token);
+  v_vendedor := public._exigir_vendedor();
 
   if v_com then
     select * into v_parceria from public.parcerias where id = p_parceria_id and ativo;
@@ -462,7 +454,7 @@ end;
 $$;
 
 -- Resumo da semana atual do próprio vendedor (mostrado na calculadora).
-create or replace function public.minha_semana(p_token text)
+create or replace function public.minha_semana()
 returns jsonb
 language plpgsql stable security definer
 set search_path = public
@@ -472,7 +464,7 @@ declare
   v_inicio timestamptz := (public._inicio_semana((now() at time zone 'America/Sao_Paulo')::date))::timestamp at time zone 'America/Sao_Paulo';
   v_res jsonb;
 begin
-  v_vendedor := public._vendedor_da_sessao(p_token);
+  v_vendedor := public._exigir_vendedor();
   select jsonb_build_object('quantidade', count(*), 'total', coalesce(sum(total), 0), 'comissao', coalesce(sum(comissao), 0))
     into v_res
     from public.vendas
@@ -491,47 +483,46 @@ create or replace function public.salvar_vendedor(
   p_nome text,
   p_discord_id text,
   p_ativo boolean,
-  p_pin text default null
+  p_admin boolean
 )
 returns uuid
 language plpgsql volatile security definer
-set search_path = public, extensions
+set search_path = public
 as $$
 declare
   v_id uuid;
-  v_discord text := nullif(trim(coalesce(p_discord_id, '')), '');
-  v_pin text := nullif(trim(coalesce(p_pin, '')), '');
+  v_discord text := trim(coalesce(p_discord_id, ''));
+  v_proprio boolean;
 begin
   if not public.is_admin() then
     raise exception 'Acesso negado.';
   end if;
-  if v_pin is not null and v_pin !~ '^\d{4,8}$' then
-    raise exception 'O PIN deve ter de 4 a 8 números.';
+  if v_discord !~ '^\d{17,20}$' then
+    raise exception 'ID do Discord inválido: deve ter de 17 a 20 números.';
+  end if;
+  if exists (select 1 from public.vendedores where discord_id = v_discord and id is distinct from p_id) then
+    raise exception 'Já existe um cadastro com este ID do Discord.';
   end if;
 
   if p_id is null then
-    if v_pin is null then
-      raise exception 'Defina um PIN para o novo vendedor.';
-    end if;
-    insert into public.vendedores (nome, discord_id, ativo, pin_hash)
-    values (trim(p_nome), v_discord, coalesce(p_ativo, true), crypt(v_pin, gen_salt('bf')))
+    insert into public.vendedores (nome, discord_id, ativo, admin)
+    values (trim(p_nome), v_discord, coalesce(p_ativo, true), coalesce(p_admin, false))
     returning id into v_id;
   else
+    -- Ninguém tira o próprio acesso ao painel (evita ficar sem nenhum admin).
+    select discord_id = public._discord_id() into v_proprio from public.vendedores where id = p_id;
+    if v_proprio and (p_admin is false or p_ativo is false or v_discord <> public._discord_id()) then
+      raise exception 'Você não pode remover o seu próprio acesso de administrador.';
+    end if;
     update public.vendedores
        set nome = trim(p_nome),
            discord_id = v_discord,
            ativo = coalesce(p_ativo, ativo),
-           pin_hash = case when v_pin is null then pin_hash else crypt(v_pin, gen_salt('bf')) end,
-           tentativas_falhas = case when v_pin is null then tentativas_falhas else 0 end,
-           bloqueado_ate = case when v_pin is null then bloqueado_ate end
+           admin = coalesce(p_admin, admin)
      where id = p_id
      returning id into v_id;
     if v_id is null then
       raise exception 'Vendedor não encontrado.';
-    end if;
-    -- PIN trocado ou vendedor desativado: derruba as sessões abertas.
-    if v_pin is not null or p_ativo is false then
-      delete from public.vendedor_sessoes where vendedor_id = v_id;
     end if;
   end if;
   return v_id;
@@ -722,12 +713,10 @@ $$;
 revoke execute on all functions in schema public from public, anon, authenticated;
 
 grant execute on function public.is_admin() to anon, authenticated;
-grant execute on function public.listar_vendedores() to anon, authenticated;
-grant execute on function public.entrar_vendedor(uuid, text) to anon, authenticated;
-grant execute on function public.sair_vendedor(text) to anon, authenticated;
-grant execute on function public.registrar_venda(text, jsonb, uuid, text, text) to anon, authenticated;
-grant execute on function public.minha_semana(text) to anon, authenticated;
-grant execute on function public.salvar_vendedor(uuid, text, text, boolean, text) to authenticated;
+grant execute on function public.meu_perfil() to authenticated;
+grant execute on function public.registrar_venda(jsonb, uuid, text, text) to authenticated;
+grant execute on function public.minha_semana() to authenticated;
+grant execute on function public.salvar_vendedor(uuid, text, text, boolean, boolean) to authenticated;
 grant execute on function public.relatorio_periodo(date, date) to authenticated;
 grant execute on function public.enviar_relatorio_discord(date) to authenticated;
 grant execute on function public.testar_webhook(text) to authenticated;

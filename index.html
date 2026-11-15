@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calculadora de Venda — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=2">
+<link rel="stylesheet" href="css/style.css?v=3">
 </head>
 <body>
 
@@ -57,7 +57,7 @@
       <h2>Resumo da venda</h2>
       <div class="vendedor-atual">
         <span>👤 <strong id="vendedor-nome">—</strong></span>
-        <button id="trocar-vendedor" type="button" class="botao-link">Trocar</button>
+        <button id="trocar-vendedor" type="button" class="botao-link">Sair</button>
       </div>
       <p id="minha-semana" class="minha-semana" hidden></p>
       <p id="resumo-tipo" class="resumo-tipo">Pista</p>
@@ -96,21 +96,22 @@
 </footer>
 
 <div id="modal-vendedor" class="modal-fundo" hidden>
-  <form id="form-vendedor" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="modal-vendedor-titulo">
+  <div class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="modal-vendedor-titulo">
     <img class="modal-logo" src="img/logo.png" alt="" width="72" height="69">
     <h2 id="modal-vendedor-titulo">Identifique-se</h2>
-    <p class="modal-texto">Selecione seu nome e digite seu PIN para registrar vendas.</p>
-    <label class="rotulo" for="select-vendedor">Vendedor <span class="obrigatorio">*</span></label>
-    <select id="select-vendedor" required>
-      <option value="">Carregando…</option>
-    </select>
-    <label class="rotulo" for="input-pin">PIN <span class="obrigatorio">*</span></label>
-    <input id="input-pin" class="pin-input" type="password" inputmode="numeric" pattern="\d*" maxlength="8" autocomplete="current-password" placeholder="••••" required>
-    <p class="dica">Não tem PIN? Peça a um administrador para cadastrar você.</p>
+    <div id="login-entrar-bloco">
+      <p class="modal-texto">Entre com a sua conta do Discord para registrar vendas.</p>
+      <button id="entrar-discord" type="button" class="botao-discord botao-bloco">Entrar com Discord</button>
+    </div>
+    <div id="login-nao-cadastrado" hidden>
+      <p class="modal-texto">Sua conta do Discord ainda não está cadastrada. Envie o ID abaixo para a liderança liberar seu acesso.</p>
+      <input id="meu-discord-id" type="text" readonly aria-label="Seu ID do Discord">
+      <button id="copiar-discord-id" type="button" class="botao botao-bloco">📋 Copiar meu ID</button>
+      <button id="tentar-novamente" type="button" class="botao-primario botao-bloco">Já fui cadastrado, tentar de novo</button>
+      <button id="sair-nao-cadastrado" type="button" class="botao-secundario botao-bloco">Entrar com outra conta</button>
+    </div>
     <p id="modal-vendedor-erro" class="status erro" hidden></p>
-    <button id="entrar" type="submit" class="botao-primario botao-bloco">Entrar</button>
-    <button id="cancelar-vendedor" type="button" class="botao-secundario botao-bloco" hidden>Cancelar</button>
-  </form>
+  </div>
 </div>
 
 <div id="modal-sucesso" class="modal-fundo" hidden>
@@ -128,7 +129,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=1"></script>
-<script src="js/calculadora.js?v=2"></script>
+<script src="js/comum.js?v=3"></script>
+<script src="js/calculadora.js?v=3"></script>
 </body>
 </html>

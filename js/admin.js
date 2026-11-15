@@ -10,51 +10,55 @@
   const cache = { vendedores: [], parcerias: [], produtos: [], vendas: [] };
   let semanaInicio = BD.inicioSemana(new Date());
   let relatorioAtual = null;
+  let meuDiscordId = null;
 
   // ================================================================ autenticação
 
   async function verificarAcesso() {
     const { data: { session } } = await db.auth.getSession();
-    $('form-login').hidden = true;
-    $('sem-permissao').hidden = true;
-    $('app').hidden = true;
-    $('sair').hidden = !session;
-    $('usuario-admin').hidden = !session;
+    $("form-login").hidden = true;
+    $("sem-permissao").hidden = true;
+    $("app").hidden = true;
+    $("sair").hidden = !session;
+    $("usuario-admin").hidden = !session;
 
     if (!session) {
-      $('form-login').hidden = false;
-      $('login-email').focus();
+      $("form-login").hidden = false;
       return;
     }
-    $('usuario-admin').textContent = session.user.email;
 
-    const { data: admin } = await db.rpc('is_admin');
-    if (!admin) {
-      $('sem-permissao').hidden = false;
+    let perfil;
+    try {
+      perfil = await BD.perfil();
+    } catch (erro) {
+      $("form-login").hidden = false;
+      $("login-erro").hidden = false;
+      $("login-erro").textContent = BD.mensagemErro(erro);
       return;
     }
-    $('app').hidden = false;
+    $("usuario-admin").textContent = perfil.nome || perfil.apelido || session.user.email || "";
+    meuDiscordId = perfil.discord_id;
+    if (!perfil.admin) {
+      $("sem-permissao-id").value = perfil.discord_id || "";
+      $("sem-permissao").hidden = false;
+      return;
+    }
+    $("app").hidden = false;
     iniciarPainel();
   }
 
-  $('form-login').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const botao = $('login-entrar');
+  $("login-entrar").addEventListener("click", async () => {
+    const botao = $("login-entrar");
     botao.disabled = true;
-    botao.textContent = '⏳ Entrando…';
-    const { error } = await db.auth.signInWithPassword({
-      email: $('login-email').value.trim(),
-      password: $('login-senha').value,
-    });
-    botao.disabled = false;
-    botao.textContent = 'Entrar';
-    $('login-erro').hidden = !error;
-    if (error) {
-      $('login-erro').textContent = /invalid/i.test(error.message) ? 'E-mail ou senha incorretos.' : BD.mensagemErro(error);
-      return;
+    botao.textContent = "⏳ Abrindo o Discord…";
+    try {
+      await BD.entrarComDiscord();
+    } catch (erro) {
+      botao.disabled = false;
+      botao.textContent = "Entrar com Discord";
+      $("login-erro").hidden = false;
+      $("login-erro").textContent = BD.mensagemErro(erro);
     }
-    $('login-senha').value = '';
-    verificarAcesso();
   });
 
   async function sair() {
@@ -96,7 +100,7 @@
 
   async function carregarListasBase() {
     const [ve, pa, pr] = await Promise.all([
-      db.from('vendedores').select('id, nome, discord_id, ativo, bloqueado_ate, criado_em').order('nome'),
+      db.from('vendedores').select('id, nome, discord_id, admin, ativo, criado_em').order('nome'),
       db.from('parcerias').select('*').order('nome'),
       db.from('produtos').select('*').order('ordem').order('nome'),
     ]);
@@ -379,14 +383,14 @@
       container.innerHTML = '<p class="vazio">Nenhum vendedor cadastrado. Clique em "+ Novo vendedor".</p>';
       return;
     }
-    const agora = new Date();
     container.innerHTML = `<table>
-      <thead><tr><th>Nome</th><th>ID do Discord</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Nome</th><th>ID do Discord</th><th>Acesso</th><th>Status</th><th></th></tr></thead>
       <tbody>${cache.vendedores.map((v) => `
         <tr>
           <td>${esc(v.nome)}</td>
-          <td>${v.discord_id ? esc(v.discord_id) : '<span class="dica">—</span>'}</td>
-          <td>${etiquetaAtivo(v.ativo)} ${v.bloqueado_ate && new Date(v.bloqueado_ate) > agora ? '<span class="etiqueta inativo">PIN bloqueado</span>' : ''}</td>
+          <td><code>${esc(v.discord_id)}</code>${v.discord_id === meuDiscordId ? ' <span class="dica">(você)</span>' : ''}</td>
+          <td>${v.admin ? '<span class="etiqueta">Administrador</span>' : 'Vendedor'}</td>
+          <td>${etiquetaAtivo(v.ativo)}</td>
           <td class="acoes"><button type="button" class="botao botao-pequeno" data-editar-vendedor="${esc(v.id)}">Editar</button></td>
         </tr>`).join('')}
       </tbody></table>`;
@@ -394,20 +398,18 @@
 
   function editarVendedor(v) {
     const novo = !v;
-    v = v || { ativo: true };
-    abrirEdicao(novo ? 'Novo vendedor' : `Editar ${v.nome}`, [
-      { nome: 'nome', rotulo: 'Nome', valor: v.nome, obrigatorio: true, max: 40, largo: true },
-      { nome: 'discord_id', rotulo: 'ID do Discord (opcional)', valor: v.discord_id, max: 20, inputmode: 'numeric',
-        dica: 'Para marcar o vendedor nas notificações. Discord → Modo Desenvolvedor → clique no perfil → Copiar ID.' },
-      { nome: 'pin', rotulo: novo ? 'PIN (4 a 8 números)' : 'Novo PIN', tipo: 'password', obrigatorio: novo, max: 8, inputmode: 'numeric',
-        dica: novo ? 'O vendedor usa este PIN para entrar na calculadora.' : 'Deixe em branco para manter o PIN atual. Trocar o PIN desbloqueia o vendedor.' },
-      { nome: 'ativo', rotulo: 'Ativo (pode registrar vendas)', tipo: 'checkbox', valor: v.ativo },
+    v = v || { ativo: true, admin: false };
+    abrirEdicao(novo ? "Novo vendedor" : `Editar ${v.nome}`, [
+      { nome: "nome", rotulo: "Nome", valor: v.nome, obrigatorio: true, max: 40, largo: true },
+      { nome: "discord_id", rotulo: "ID do Discord", valor: v.discord_id, obrigatorio: true, max: 20, inputmode: "numeric", largo: true,
+        dica: "É com ele que a pessoa entra no site. No Discord: Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no nome → Copiar ID do usuário." },
+      { nome: "ativo", rotulo: "Ativo (pode entrar e registrar vendas)", tipo: "checkbox", valor: v.ativo },
+      { nome: "admin", rotulo: "Administrador (acessa este painel)", tipo: "checkbox", valor: v.admin },
     ], async (val) => {
-      if (val.nome.length < 2) throw new Error('O nome precisa ter pelo menos 2 letras.');
-      if (val.discord_id && !/^\d{17,20}$/.test(val.discord_id)) throw new Error('ID do Discord inválido: deve ter de 17 a 20 números.');
-      if (val.pin && !/^\d{4,8}$/.test(val.pin)) throw new Error('O PIN deve ter de 4 a 8 números.');
-      falhou(await db.rpc('salvar_vendedor', {
-        p_id: novo ? null : v.id, p_nome: val.nome, p_discord_id: val.discord_id || null, p_ativo: val.ativo, p_pin: val.pin || null,
+      if (val.nome.length < 2) throw new Error("O nome precisa ter pelo menos 2 letras.");
+      if (!/^\d{17,20}$/.test(val.discord_id)) throw new Error("ID do Discord inválido: deve ter de 17 a 20 números.");
+      falhou(await db.rpc("salvar_vendedor", {
+        p_id: novo ? null : v.id, p_nome: val.nome, p_discord_id: val.discord_id, p_ativo: val.ativo, p_admin: val.admin,
       }));
       carregarVendedores();
     });

@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=2">
+<link rel="stylesheet" href="css/style.css?v=3">
 </head>
 <body>
 
@@ -28,21 +28,20 @@
 <main id="principal" class="container largo">
 
   <!-- Login -->
-  <form id="form-login" class="cartao login-admin" hidden>
+  <section id="form-login" class="cartao login-admin" hidden>
     <img class="modal-logo" src="img/logo.png" alt="" width="72" height="69">
     <h2 style="justify-content:center">Acesso administrativo</h2>
-    <label class="rotulo" for="login-email">E-mail</label>
-    <input id="login-email" type="email" autocomplete="username" required>
-    <label class="rotulo" for="login-senha">Senha</label>
-    <input id="login-senha" type="password" autocomplete="current-password" required>
+    <p class="modal-texto">Entre com a sua conta do Discord.</p>
     <p id="login-erro" class="status erro" hidden></p>
-    <button id="login-entrar" type="submit" class="botao-primario botao-bloco">Entrar</button>
-  </form>
+    <button id="login-entrar" type="button" class="botao-discord botao-bloco">Entrar com Discord</button>
+  </section>
 
   <section id="sem-permissao" class="cartao login-admin" hidden>
     <h2 style="justify-content:center">Sem permissão</h2>
-    <p class="modal-texto">Sua conta não é administradora. Peça a um administrador para incluir seu usuário na tabela <code>admins</code>.</p>
-    <button id="sair-sem-permissao" type="button" class="botao botao-bloco">Sair</button>
+    <p class="modal-texto">Sua conta do Discord não é administradora. Peça a um administrador para marcar a opção <strong>Administrador</strong> no seu cadastro.</p>
+    <label class="rotulo" for="sem-permissao-id">Seu ID do Discord</label>
+    <input id="sem-permissao-id" type="text" readonly>
+    <button id="sair-sem-permissao" type="button" class="botao botao-bloco">Entrar com outra conta</button>
   </section>
 
   <!-- Painel -->
@@ -178,7 +177,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=2"></script>
-<script src="js/admin.js?v=2"></script>
+<script src="js/comum.js?v=3"></script>
+<script src="js/admin.js?v=3"></script>
 </body>
 </html>

@@ -241,7 +241,8 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .botao-primario,
 .botao-secundario,
 .botao-perigo,
-.botao-sucesso {
+.botao-sucesso,
+.botao-discord {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -486,7 +487,9 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .sucesso-total { font-size: 2rem; font-weight: 700; color: var(--ciano); margin: 4px 0; }
 .sucesso-detalhe { color: var(--texto-suave); font-size: 0.85rem; margin: 0 0 8px; }
 
-.pin-input { text-align: center; font-size: 1.4rem !important; letter-spacing: 0.5em; }
+.botao-discord { background: #5865f2; border-color: #5865f2; color: #fff; padding: 12px 16px; }
+.botao-discord:hover:not(:disabled) { filter: brightness(1.1); }
+#meu-discord-id, #sem-permissao-id { text-align: center; font-family: monospace; letter-spacing: 0.05em; }
 
 /* Rodapé */
 

@@ -24,9 +24,38 @@
       if (!erro) return 'Erro desconhecido.';
       const msg = erro.message || String(erro);
       if (/Failed to fetch|NetworkError/i.test(msg)) return 'Sem conexão com o servidor. Verifique sua internet.';
-      if (/SESSAO_INVALIDA/.test(msg)) return 'Sua sessão expirou. Entre novamente com seu PIN.';
+      if (/NAO_CADASTRADO/.test(msg)) return 'Sua conta do Discord não está cadastrada ou foi desativada.';
+      if (/JWT expired|Auth session missing/i.test(msg)) return 'Sua sessão expirou. Entre novamente com o Discord.';
       if (/permission denied|row-level security/i.test(msg)) return 'Você não tem permissão para esta ação.';
       return msg;
+    },
+
+    // Login com o Discord: sai do site e volta para a mesma página já logado.
+    async entrarComDiscord() {
+      const { error } = await BD.db.auth.signInWithOAuth({
+        provider: 'discord',
+        options: { redirectTo: location.origin + location.pathname },
+      });
+      if (error) throw error;
+    },
+
+    // { discord_id, cadastrado, id, nome, admin } do usuário logado, ou null sem login.
+    async perfil() {
+      const { data: { session } } = await BD.db.auth.getSession();
+      if (!session) return null;
+      const { data, error } = await BD.db.rpc('meu_perfil');
+      if (error) throw error;
+      const meta = session.user.user_metadata || {};
+      data.apelido = meta.full_name || meta.name || meta.custom_claims?.global_name || '';
+      return data;
+    },
+
+    // Mostra a mensagem de erro que o Supabase devolve na URL quando o login falha.
+    erroDoLogin() {
+      const params = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+      const erro = params.get('error_description');
+      if (erro) history.replaceState(null, '', location.pathname);
+      return erro ? decodeURIComponent(erro.replace(/\+/g, ' ')) : '';
     },
 
     lerSalvo(chave) {

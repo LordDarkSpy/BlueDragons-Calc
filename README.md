@@ -4,7 +4,7 @@ Site estático (HTML/CSS/JS puro) hospedado no GitHub Pages, com banco de dados 
 
 Substitui a planilha "VENDAS MERCADO OCULTO" (abas SERRA, PENDRIVE, PAGAMENTO e Base Valores e Craft):
 
-- **Calculadora** (`index.html`): o vendedor entra com nome + PIN, escolhe **Pista** ou **Parceria**, informa o cliente, monta o pedido e registra a venda. Mostra também a tabela de preços com o link para copiar e enviar.
+- **Calculadora** (`index.html`): o vendedor entra com a conta do **Discord**, escolhe **Pista** ou **Parceria**, informa o cliente, monta o pedido e registra a venda. Mostra também a tabela de preços com o link para copiar e enviar.
 - **Painel** (`admin.html`): relatório semanal (totais, ranking, **pagamento dos vendedores** e **craft usado**), histórico de vendas (cancelamento e exportação CSV), cadastro de vendedores, parcerias, produtos e configuração do Discord.
 - **Discord**: cada venda registrada gera um aviso no canal, e toda segunda-feira às 09:00 (horário de Brasília) sai o relatório da semana anterior. Também dá para enviar o relatório pelo painel quando quiser.
 
@@ -40,17 +40,22 @@ Ao trocar a tabela de preços, salve com um nome novo (`tabela_v2.png`) e atuali
 3. Abra o **SQL Editor**, cole todo o conteúdo de `supabase/schema.sql` e clique em **Run**.
    O script pode ser executado de novo depois (por exemplo, após uma atualização) sem perder dados.
 
-### 2. Criar o administrador
+### 2. Login com o Discord
 
-1. Em **Authentication → Users → Add user → Create new user**, crie seu usuário com e-mail e senha (marque *Auto Confirm User*).
-2. No **SQL Editor**, rode (trocando o e-mail):
+1. Em <https://discord.com/developers/applications>, crie uma aplicação. Em **OAuth2**, copie o *Client ID* e o *Client Secret* e adicione o redirect `https://SEU-PROJETO.supabase.co/auth/v1/callback`.
+2. No Supabase, em **Authentication → Sign In / Providers**:
+   - ative **Discord** e cole o Client ID e o Secret;
+   - desative **Email** (ninguém entra por e-mail);
+   - deixe *Allow new users to sign up* **ligado**: o primeiro login pelo Discord cria a conta. Quem não estiver cadastrado na tabela de vendedores entra, mas não vê nem registra nada.
+3. Em **Authentication → URL Configuration**, coloque o endereço do site em *Site URL* e adicione `https://SEU-USUARIO.github.io/BlueDragons-Calc/**` em *Redirect URLs*.
+4. Cadastre o primeiro administrador no **SQL Editor** (troque o nome e o ID do Discord):
 
    ```sql
-   insert into public.admins (user_id)
-   select id from auth.users where email = 'seu-email@exemplo.com';
+   insert into public.vendedores (nome, discord_id, admin)
+   values ('Seu nome', '123456789012345678', true);
    ```
 
-3. Recomendado: em **Authentication → Sign In / Providers**, desative *Allow new users to sign up*, para ninguém criar conta sozinho.
+   Para descobrir o ID: Discord → Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no seu nome → **Copiar ID do usuário**. Os próximos cadastros são feitos pelo painel.
 
 ### 3. Conectar o site
 
@@ -67,17 +72,18 @@ A anon key é pública por natureza; quem protege os dados são as regras do `sc
 
 ### 4. Primeiro acesso ao painel
 
-Abra `admin.html`, entre com o usuário admin e:
+Abra `admin.html`, clique em **Entrar com Discord** e:
 
 1. **Produtos** → confira os preços (os da tabela atual já vêm cadastrados).
-2. **Vendedores** → cadastre cada vendedor com um PIN de 4 a 8 números (e o ID do Discord, se quiser que ele seja marcado nos avisos).
+2. **Vendedores** → cadastre cada pessoa com o **ID do Discord** (é com ele que ela entra). Marque *Administrador* para quem pode usar o painel.
 3. **Parcerias** → cadastre as organizações parceiras.
 4. **Discord** → cole as URLs dos webhooks (Canal → Editar → Integrações → Webhooks → Novo webhook → Copiar URL), clique em **Testar** e salve.
 
 ## Segurança
 
 - Os preços são recalculados **no banco** a cada venda; alterar o JavaScript no navegador não muda o valor registrado.
-- O PIN é guardado criptografado (bcrypt). Após 5 tentativas erradas, o vendedor fica bloqueado por 15 minutos. Trocar o PIN no painel desbloqueia e encerra as sessões abertas.
+- O login é feito pelo Discord, e o banco reconhece a pessoa pelo ID do Discord que o próprio Supabase grava no login (não dá para se passar por outro vendedor). Desativar alguém no painel corta o acesso na hora.
+- Um administrador não consegue tirar o próprio acesso, para o painel nunca ficar sem admin.
 - As URLs dos webhooks ficam só no banco, e quem envia as mensagens ao Discord é o próprio Supabase (`pg_net`).
 - Vendas não são apagadas: o admin pode **cancelar** (sai dos relatórios) e reativar.
 
