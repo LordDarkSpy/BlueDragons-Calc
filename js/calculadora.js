@@ -186,7 +186,9 @@
       linha.className = 'item-linha';
       linha.id = `linha-${produto.id}`;
       linha.innerHTML = `
-        <span class="item-icone" aria-hidden="true">${BD.iconeProduto(produto)}</span>
+        ${produto.serve_para
+          ? `<button type="button" class="item-icone tem-dica" data-dica aria-label="Para que serve: ${esc(produto.nome)}" aria-expanded="false">${BD.iconeProduto(produto)}<span class="balao-dica" role="tooltip"><strong>Serve para:</strong> ${esc(produto.serve_para)}</span></button>`
+          : `<span class="item-icone" aria-hidden="true">${BD.iconeProduto(produto)}</span>`}
         <div>
           <p class="item-nome">${esc(produto.nome)}</p>
           <p class="item-preco"></p>
@@ -335,7 +337,7 @@
 
   async function carregarCatalogo() {
     const [resProdutos, resParcerias] = await Promise.all([
-      db.from('produtos').select('id, nome, icone, imagem, categoria, preco_com_parceria, preco_sem_parceria, craft, ordem').eq('ativo', true).order('ordem').order('nome'),
+      db.from('produtos').select('id, nome, icone, imagem, categoria, preco_com_parceria, preco_sem_parceria, craft, serve_para, ordem').eq('ativo', true).order('ordem').order('nome'),
       db.from('parcerias').select('id, nome').eq('ativo', true).order('nome'),
     ]);
     if (resProdutos.error) {
@@ -353,4 +355,18 @@
   const erroLogin = BD.erroDoLogin();
   verificarLogin().then(() => { if (erroLogin) mostrarErroVendedor('O Discord não completou o login: ' + erroLogin); });
   db.auth.onAuthStateChange((evento) => { if (evento === 'SIGNED_IN' && !sessao) verificarLogin(); });
+  // "Serve para": abre ao clicar na imagem (no computador também aparece ao passar o mouse).
+  function fecharDicas(exceto) {
+    document.querySelectorAll('[data-dica].aberto').forEach((b) => {
+      if (b !== exceto) { b.classList.remove('aberto'); b.setAttribute('aria-expanded', 'false'); }
+    });
+  }
+  document.addEventListener('click', (e) => {
+    const botao = e.target.closest('[data-dica]');
+    fecharDicas(botao);
+    if (!botao) return;
+    const aberto = botao.classList.toggle('aberto');
+    botao.setAttribute('aria-expanded', String(aberto));
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharDicas(null); });
 })();

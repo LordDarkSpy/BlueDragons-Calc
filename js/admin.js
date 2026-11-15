@@ -1197,7 +1197,7 @@
       <tbody>${cache.produtos.map((p) => `
         <tr>
           <td>${p.ordem}</td>
-          <td><span class="produto-tabela-icone">${BD.iconeProduto(p, 'produto-img-pequena')}</span> <strong>${esc(p.nome)}</strong></td>
+          <td><span class="produto-tabela-icone">${BD.iconeProduto(p, 'produto-img-pequena')}</span> <strong>${esc(p.nome)}</strong>${p.serve_para ? `<div class="dica">${esc(p.serve_para)}</div>` : ''}</td>
           <td>${esc(p.categoria)}</td>
           <td class="num">${formatarValor(p.preco_com_parceria)}</td>
           <td class="num">${formatarValor(p.preco_sem_parceria)}</td>
@@ -1225,6 +1225,8 @@
       { nome: 'preco_sem_parceria', rotulo: 'Preço pista', tipo: 'number', min: 0, valor: p.preco_sem_parceria, obrigatorio: true },
       { nome: 'craft', rotulo: 'Craft: materiais usados por unidade', tipo: 'craft', valor: p.craft, sugestoes: materiaisConhecidos(),
         dica: 'Ex.: 1 Ferro, 1 Plástico, 1 Vidro. Escolha um material da lista ou digite um novo.' },
+      { nome: 'serve_para', rotulo: 'Serve para', tipo: 'textarea', valor: p.serve_para, max: 300, largo: true,
+        dica: 'Aparece na calculadora ao passar o mouse ou clicar na imagem do produto.' },
       { nome: 'ativo', rotulo: 'Ativo (aparece na calculadora)', tipo: 'checkbox', valor: p.ativo },
     ], async (val) => {
       const com = Number(val.preco_com_parceria);
@@ -1237,6 +1239,7 @@
         icone: val.icone || '📦', imagem: val.imagem || null, nome: val.nome, categoria: catIgual || categoria || 'Geral',
         preco_com_parceria: com, preco_sem_parceria: sem,
         craft: val.craft,
+        serve_para: val.serve_para || null,
         ordem: parseInt(val.ordem, 10) || 0, ativo: val.ativo,
       };
       falhou(novo ? await db.from('produtos').insert(dados) : await db.from('produtos').update(dados).eq('id', p.id));

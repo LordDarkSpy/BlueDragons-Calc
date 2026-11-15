@@ -984,3 +984,27 @@ body::before {
 .editor-craft { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 8px; }
 .linha-craft { display: grid; grid-template-columns: minmax(0, 1fr) 90px auto; gap: 6px; align-items: center; }
 .linha-craft .craft-quantidade { text-align: right; }
+
+/* "Serve para" do produto: balão na imagem da calculadora */
+button.item-icone.tem-dica {
+  position: relative; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: help;
+  border-radius: 8px;
+}
+button.item-icone.tem-dica::after {
+  content: 'i'; position: absolute; right: -2px; bottom: -2px;
+  width: 15px; height: 15px; border-radius: 50%; font-size: 0.65rem; font-weight: 700; line-height: 15px;
+  background: var(--azul); color: #fff; font-style: italic;
+}
+.balao-dica {
+  display: none; position: absolute; left: 0; top: calc(100% + 8px); z-index: 20;
+  width: max-content; max-width: min(280px, 70vw); padding: 9px 12px; border-radius: 8px;
+  background: var(--cartao); border: 1px solid var(--azul); box-shadow: var(--sombra);
+  color: var(--texto); font-size: 0.82rem; line-height: 1.4; text-align: left; white-space: normal;
+}
+.balao-dica::before {
+  content: ''; position: absolute; left: 18px; top: -6px; width: 10px; height: 10px;
+  background: var(--cartao); border-left: 1px solid var(--azul); border-top: 1px solid var(--azul); transform: rotate(45deg);
+}
+button.item-icone.tem-dica.aberto .balao-dica,
+button.item-icone.tem-dica:focus-visible .balao-dica { display: block; }
+@media (hover: hover) { button.item-icone.tem-dica:hover .balao-dica { display: block; } }

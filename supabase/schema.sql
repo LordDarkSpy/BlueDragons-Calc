@@ -260,6 +260,9 @@ alter table public.produtos add column if not exists craft jsonb not null defaul
   check (jsonb_typeof(craft) = 'array');
 alter table public.venda_itens add column if not exists craft jsonb not null default '[]';  -- total usado na linha
 
+-- Para que serve o produto (aparece ao passar o mouse ou clicar na imagem, na calculadora).
+alter table public.produtos add column if not exists serve_para text check (serve_para is null or length(serve_para) <= 300);
+
 -- Converte o formato antigo (placas + um material) e zera as colunas antigas (roda uma vez só).
 update public.produtos p set
   craft = coalesce((
@@ -376,6 +379,7 @@ declare
   v_lista jsonb := '[]'::jsonb;
   v_idx int;
 begin
+  new.serve_para := nullif(btrim(coalesce(new.serve_para, '')), '');
   new.categoria := regexp_replace(btrim(coalesce(new.categoria, '')), '\s+', ' ', 'g');
   if new.categoria = '' then new.categoria := 'Geral'; end if;
   if length(new.categoria) > 30 then raise exception 'A categoria pode ter no máximo 30 caracteres.'; end if;
