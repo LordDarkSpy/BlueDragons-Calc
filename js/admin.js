@@ -100,7 +100,7 @@
 
   async function carregarListasBase() {
     const [ve, pa, pr] = await Promise.all([
-      db.from('vendedores').select('id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em').order('nome'),
+      db.from('vendedores').select('id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em, cargos').order('nome'),
       db.from('parcerias').select('*').order('nome'),
       db.from('produtos').select('*').order('ordem').order('nome'),
     ]);
@@ -378,7 +378,7 @@
 
   async function carregarVendedores() {
     const container = $('vendedores-tabela');
-    await carregarListasBase();
+    await Promise.all([carregarListasBase(), carregarCargos()]);
     if (!cache.vendedores.length) {
       container.innerHTML = '<p class="vazio">Nenhum vendedor cadastrado. Clique em "+ Novo vendedor".</p>';
       return;
@@ -389,7 +389,7 @@
         <tr>
           <td><strong>${esc(nomeVendedor(v))}</strong>${v.nome_discord && v.nome_discord !== v.nome ? `<div class="dica">cadastro: ${esc(v.nome)}</div>` : ''}${!v.nome_discord ? '<div class="dica">nome do servidor ainda não buscado</div>' : ''}</td>
           <td><code>${esc(v.discord_id)}</code>${v.discord_id === meuDiscordId ? ' <span class="dica">(você)</span>' : ''}</td>
-          <td>${v.admin ? '<span class="etiqueta">Administrador</span>' : 'Vendedor'}</td>
+          <td>${acessoVendedor(v)}</td>
           <td>${etiquetaAtivo(v.ativo)}${v.no_servidor === false ? ' <span class="etiqueta inativo">Fora do servidor</span>' : ''}</td>
           <td class="acoes"><button type="button" class="botao botao-pequeno" data-editar-vendedor="${esc(v.id)}">Editar</button></td>
         </tr>`).join('')}
@@ -405,7 +405,8 @@
       { nome: "discord_id", rotulo: "ID do Discord", valor: v.discord_id, obrigatorio: true, max: 20, inputmode: "numeric", largo: true,
         dica: "É com ele que a pessoa entra no site. No Discord: Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no nome → Copiar ID do usuário." },
       { nome: "ativo", rotulo: "Ativo (pode entrar e registrar vendas)", tipo: "checkbox", valor: v.ativo },
-      { nome: "admin", rotulo: "Administrador (acessa este painel)", tipo: "checkbox", valor: v.admin },
+      { nome: "admin", rotulo: "Administrador manual (acessa o painel mesmo sem cargo)", tipo: "checkbox", valor: v.admin,
+        dica: "Quem tem um dos cargos escolhidos na aba Discord já acessa o painel sem marcar esta opção." },
     ], async (val) => {
       if (val.nome.length < 2) throw new Error("O nome precisa ter pelo menos 2 letras.");
       if (!/^\d{17,20}$/.test(val.discord_id)) throw new Error("ID do Discord inválido: deve ter de 17 a 20 números.");
@@ -415,6 +416,27 @@
       await carregarVendedores();
       sincronizarNomes(id, true);
     });
+  }
+
+  // Cargos do servidor (para mostrar nomes) e cargos que dão acesso ao painel.
+  let cargosServidor = [];
+  let cargosAdmin = [];
+
+  async function carregarCargos() {
+    const [rc, rcfg] = await Promise.all([
+      db.from('discord_cargos').select('id, nome, cor, posicao').order('posicao', { ascending: false }),
+      db.from('configuracoes').select('cargos_admin').eq('id', 1).single(),
+    ]);
+    cargosServidor = rc.data || [];
+    cargosAdmin = (rcfg.data && rcfg.data.cargos_admin) || [];
+  }
+
+  function acessoVendedor(v) {
+    const porCargo = (v.cargos || []).filter((id) => cargosAdmin.includes(id))
+      .map((id) => (cargosServidor.find((c) => c.id === id) || { nome: 'cargo ' + id }).nome);
+    if (porCargo.length) return `<span class="etiqueta">Administrador</span><div class="dica">pelo cargo ${esc(porCargo.join(', '))}${v.admin ? ' e manual' : ''}</div>`;
+    if (v.admin) return '<span class="etiqueta">Administrador</span><div class="dica">manual</div>';
+    return 'Vendedor';
   }
 
   function nomeVendedor(v) {
@@ -530,7 +552,7 @@
       <tbody>${cache.produtos.map((p) => `
         <tr>
           <td>${p.ordem}</td>
-          <td>${esc(p.icone)} <strong>${esc(p.nome)}</strong></td>
+          <td><span class="produto-tabela-icone">${BD.iconeProduto(p, 'produto-img-pequena')}</span> <strong>${esc(p.nome)}</strong></td>
           <td>${esc(p.categoria)}</td>
           <td class="num">${formatarValor(p.preco_com_parceria)}</td>
           <td class="num">${formatarValor(p.preco_sem_parceria)}</td>
@@ -548,7 +570,8 @@
     const novo = !p;
     p = p || { icone: '📦', categoria: 'Geral', craft_placa: 0, craft_material: 0, material_nome: 'Metal', ativo: true, ordem: (cache.produtos.length + 1) * 10 };
     abrirEdicao(novo ? 'Novo produto' : `Editar ${p.nome}`, [
-      { nome: 'icone', rotulo: 'Ícone (emoji)', valor: p.icone, max: 8 },
+      { nome: 'icone', rotulo: 'Ícone (emoji)', valor: p.icone, max: 8, dica: 'Usado no Discord e quando não há imagem.' },
+      { nome: 'imagem', rotulo: 'Imagem', valor: p.imagem, max: 300, placeholder: 'img/produtos/serra.svg ou https://…', dica: 'Caminho no site ou link de uma imagem. Deixe vazio para usar o emoji.' },
       { nome: 'nome', rotulo: 'Nome', valor: p.nome, obrigatorio: true, max: 60 },
       { nome: 'categoria', rotulo: 'Categoria', valor: p.categoria, max: 30, placeholder: 'Ex.: Pendrives, Ferramentas' },
       { nome: 'ordem', rotulo: 'Ordem na lista', tipo: 'number', valor: p.ordem, dica: 'Menor aparece primeiro.' },
@@ -566,7 +589,7 @@
       const material = parseInt(val.craft_material || '0', 10);
       if (!(placa >= 0) || !(material >= 0)) throw new Error('As quantidades de craft devem ser números inteiros maiores ou iguais a zero.');
       const dados = {
-        icone: val.icone || '📦', nome: val.nome, categoria: val.categoria || 'Geral',
+        icone: val.icone || '📦', imagem: val.imagem || null, nome: val.nome, categoria: val.categoria || 'Geral',
         preco_com_parceria: com, preco_sem_parceria: sem,
         craft_placa: placa, craft_material: material, material_nome: val.material_nome || 'Material',
         ordem: parseInt(val.ordem, 10) || 0, ativo: val.ativo,
@@ -608,6 +631,7 @@
     $('cfg-comissao').value = Math.round(Number(data.percentual_comissao) * 1000) / 10;
     $('cfg-servidor').value = data.discord_servidor_id || '';
     atualizarStatusBot();
+    renderizarCargos();
     BD.moeda = data.moeda || BD.moeda;
   }
 
@@ -627,6 +651,7 @@
     const { error } = await db.from('configuracoes').update({
       percentual_comissao: pct / 100,
       discord_servidor_id: servidor || null,
+      cargos_admin: [...document.querySelectorAll('#cfg-cargos input:checked')].map((i) => i.value),
       webhook_vendas: vendas || null,
       webhook_relatorios: relatorios || null,
       notificar_vendas: $('cfg-notificar').checked,
@@ -638,6 +663,25 @@
     botao.disabled = false;
     BD.toast(error ? BD.mensagemErro(error) : 'Configurações salvas.', error ? 'erro' : 'ok');
     if (!error) BD.moeda = $('cfg-moeda').value || 'R$ ';
+  });
+
+  async function renderizarCargos() {
+    await carregarCargos();
+    const el = $('cfg-cargos');
+    if (!cargosServidor.length) {
+      el.innerHTML = '<p class="dica">Nenhum cargo carregado ainda. Salve o token do bot e clique em "Carregar cargos do servidor".</p>';
+      return;
+    }
+    el.innerHTML = cargosServidor.map((c) => {
+      const cor = c.cor ? '#' + c.cor.toString(16).padStart(6, '0') : 'var(--texto-suave)';
+      return `<label class="checkbox cargo-opcao"><input type="checkbox" value="${esc(c.id)}" ${cargosAdmin.includes(c.id) ? 'checked' : ''}>
+        <span class="cargo-cor" style="background:${cor}"></span> ${esc(c.nome)}</label>`;
+    }).join('');
+  }
+
+  $('cfg-carregar-cargos').addEventListener('click', async () => {
+    await sincronizarNomes(null, false);
+    renderizarCargos();
   });
 
   async function atualizarStatusBot() {

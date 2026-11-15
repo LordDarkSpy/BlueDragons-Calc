@@ -65,6 +65,11 @@ create unique index if not exists vendedores_discord_id_idx on public.vendedores
 alter table public.vendedores add column if not exists nome_discord text;
 alter table public.vendedores add column if not exists no_servidor boolean;
 alter table public.vendedores add column if not exists nome_discord_em timestamptz;
+-- IDs dos cargos que a pessoa tem no servidor (também preenchido pelo bot).
+alter table public.vendedores add column if not exists cargos text[] not null default '{}';
+
+-- Imagem do produto na calculadora (caminho no site ou URL). Sem imagem, usa o ícone (emoji).
+alter table public.produtos add column if not exists imagem text;
 drop function if exists public.listar_vendedores();
 drop function if exists public.entrar_vendedor(uuid, text);
 drop function if exists public.sair_vendedor(text);
@@ -133,11 +138,26 @@ alter table public.configuracoes add column if not exists discord_servidor_id te
 insert into public.configuracoes (id, discord_servidor_id) values (1, '1549634672877633588') on conflict (id) do nothing;
 update public.configuracoes set discord_servidor_id = '1549634672877633588' where id = 1 and discord_servidor_id is null;
 
+-- Cargos do servidor que dão acesso ao painel administrativo.
+alter table public.configuracoes add column if not exists cargos_admin text[] not null default '{}';
+
 -- Pedidos feitos ao Discord (pg_net responde de forma assíncrona).
 create table if not exists public.discord_pedidos (
   request_id bigint primary key,
-  vendedor_id uuid not null references public.vendedores (id) on delete cascade,
+  vendedor_id uuid references public.vendedores (id) on delete cascade,
+  tipo text not null default 'membro',
   criado_em timestamptz not null default now()
+);
+alter table public.discord_pedidos add column if not exists tipo text not null default 'membro';
+alter table public.discord_pedidos alter column vendedor_id drop not null;
+
+-- Cargos do servidor configurado (lista usada no painel para escolher quem é admin).
+create table if not exists public.discord_cargos (
+  id text primary key,
+  nome text not null,
+  cor int not null default 0,
+  posicao int not null default 0,
+  atualizado_em timestamptz not null default now()
 );
 
 -- Produtos iniciais (tabela de preços do Mercado Oculto). Só entram se a tabela estiver vazia.
@@ -154,6 +174,17 @@ select * from (values
   ('Algema',               '⛓️', 'Ferramentas', 3600,  4200, 30, 30, 'Metal',    90)
 ) as p (nome, icone, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem)
 where not exists (select 1 from public.produtos);
+
+-- Imagens próprias dos produtos iniciais (só preenche se ainda estiver vazio).
+update public.produtos p set imagem = 'img/produtos/' || i.arquivo
+from (values
+  ('Pendrive Fajuto', 'pendrive-fajuto.svg'), ('Pendrive Comum', 'pendrive-comum.svg'),
+  ('Pendrive Incomum', 'pendrive-incomum.svg'), ('Pendrive Raro', 'pendrive-raro.svg'),
+  ('Pendrive Especial', 'pendrive-especial.svg'), ('Serra', 'serra.svg'),
+  ('Chave de Fenda', 'chave-de-fenda.svg'), ('Silenciador de Sinal', 'silenciador-de-sinal.svg'),
+  ('Algema', 'algema.svg')
+) as i (nome, arquivo)
+where p.nome = i.nome and p.imagem is null;
 
 -- -----------------------------------------------------------------------------
 -- Permissões e RLS
@@ -187,8 +218,13 @@ returns boolean
 language sql stable security definer
 set search_path = public
 as $$
+  -- Admin: marcado no cadastro OU com um dos cargos do servidor escolhidos no painel.
   select exists (select 1 from public.admins where user_id = auth.uid())
-      or coalesce((public._vendedor_atual()).admin, false);
+      or exists (
+        select 1 from public.vendedores v, public.configuracoes c
+        where c.id = 1 and v.ativo and v.discord_id = public._discord_id()
+          and (v.admin or v.cargos && c.cargos_admin)
+      );
 $$;
 
 alter table public.admins enable row level security;
@@ -223,9 +259,15 @@ create policy parcerias_admin on public.parcerias for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
 
 -- Vendedores: só o admin lê. Criação/edição via RPC salvar_vendedor.
-grant select (id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em) on public.vendedores to authenticated;
+grant select (id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em, cargos) on public.vendedores to authenticated;
 alter table public.discord_pedidos enable row level security;
 revoke all on public.discord_pedidos from anon, authenticated;
+alter table public.discord_cargos enable row level security;
+revoke all on public.discord_cargos from anon, authenticated;
+grant select on public.discord_cargos to authenticated;
+drop policy if exists discord_cargos_admin on public.discord_cargos;
+create policy discord_cargos_admin on public.discord_cargos for select to authenticated
+  using (public.is_admin());
 drop policy if exists vendedores_admin on public.vendedores;
 create policy vendedores_admin on public.vendedores for select to authenticated
   using (public.is_admin());
@@ -304,7 +346,8 @@ as $$
     'cadastrado', v.id is not null,
     'id', v.id,
     'nome', coalesce(v.nome_discord, v.nome),
-    'admin', public.is_admin()
+    'admin', public.is_admin(),
+    'admin_manual', coalesce(v.admin, false)
   )
   from (select (public._vendedor_atual()).*) v;
 $$;
@@ -528,8 +571,12 @@ begin
     returning id into v_id;
   else
     -- Ninguém tira o próprio acesso ao painel (evita ficar sem nenhum admin).
+    -- (tirar o "Administrador" manual só é permitido se o cargo do servidor já der acesso).
     select discord_id = public._discord_id() into v_proprio from public.vendedores where id = p_id;
-    if v_proprio and (p_admin is false or p_ativo is false or v_discord <> public._discord_id()) then
+    if v_proprio and (p_ativo is false or v_discord <> public._discord_id()
+        or (p_admin is false and not exists (
+              select 1 from public.vendedores ve, public.configuracoes c
+              where ve.id = p_id and c.id = 1 and ve.cargos && c.cargos_admin))) then
       raise exception 'Você não pode remover o seu próprio acesso de administrador.';
     end if;
     update public.vendedores
@@ -812,6 +859,14 @@ begin
     insert into public.discord_pedidos (request_id, vendedor_id) values (v_req, v.id);
     v_qtd := v_qtd + 1;
   end loop;
+  -- Na atualização geral, busca também a lista de cargos do servidor.
+  if p_vendedor_id is null then
+    v_req := net.http_get(
+      url := 'https://discord.com/api/v10/guilds/' || v_servidor || '/roles',
+      headers := jsonb_build_object('Authorization', 'Bot ' || v_token, 'User-Agent', 'BlueDragonsCalc (supabase, 1.0)')
+    );
+    insert into public.discord_pedidos (request_id, tipo) values (v_req, 'cargos');
+  end if;
   return v_qtd;
 end;
 $$;
@@ -831,7 +886,7 @@ declare
   v_erro text;
 begin
   for r in
-    select p.request_id, p.vendedor_id, h.status_code, h.content, h.error_msg, h.timed_out
+    select p.request_id, p.vendedor_id, p.tipo, h.status_code, h.content, h.error_msg, h.timed_out
     from public.discord_pedidos p
     join net._http_response h on h.id = p.request_id
   loop
@@ -841,15 +896,24 @@ begin
       v_corpo := null;
     end;
 
-    if r.status_code = 200 and v_corpo is not null then
+    if r.tipo = 'cargos' and r.status_code = 200 and jsonb_typeof(v_corpo) = 'array' then
+      -- Lista de cargos do servidor (sem @everyone e sem cargos de bots/integrações).
+      delete from public.discord_cargos;
+      insert into public.discord_cargos (id, nome, cor, posicao)
+      select c->>'id', left(c->>'name', 100), coalesce((c->>'color')::int, 0), coalesce((c->>'position')::int, 0)
+      from jsonb_array_elements(v_corpo) c
+      where c->>'id' <> (select discord_servidor_id from public.configuracoes where id = 1)
+        and not coalesce((c->>'managed')::boolean, false);
+    elsif r.status_code = 200 and v_corpo is not null then
       v_nome := coalesce(nullif(v_corpo->>'nick', ''), nullif(v_corpo->'user'->>'global_name', ''), v_corpo->'user'->>'username');
       update public.vendedores
-         set nome_discord = left(v_nome, 40), no_servidor = true, nome_discord_em = now()
+         set nome_discord = left(v_nome, 40), no_servidor = true, nome_discord_em = now(),
+             cargos = coalesce(array(select jsonb_array_elements_text(v_corpo->'roles')), '{}')
        where id = r.vendedor_id;
       v_atualizados := v_atualizados + 1;
     elsif r.status_code = 404 and (v_corpo->>'code') = '10007' then
-      -- Unknown Member: a pessoa não está no servidor.
-      update public.vendedores set no_servidor = false, nome_discord_em = now() where id = r.vendedor_id;
+      -- Unknown Member: a pessoa não está no servidor (perde os cargos).
+      update public.vendedores set no_servidor = false, cargos = '{}', nome_discord_em = now() where id = r.vendedor_id;
       v_fora := v_fora + 1;
     else
       v_erro := case
@@ -887,6 +951,37 @@ begin
 end;
 $$;
 
+-- Chamado pelo site logo após o login: atualiza nome e cargos de quem entrou
+-- (no máximo uma consulta a cada 2 minutos por pessoa). O site chama duas vezes:
+-- a primeira pede ao Discord, a segunda (1-2 s depois) aplica a resposta.
+create or replace function public.atualizar_meu_discord()
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v public.vendedores := public._vendedor_atual();
+  v_pendente boolean;
+begin
+  if v.id is null then
+    return jsonb_build_object('pedido', false);
+  end if;
+  perform public._discord_aplicar_nomes();
+  v := public._vendedor_atual(); -- recarrega: a resposta pode ter acabado de ser aplicada
+  if v.id is null then
+    return jsonb_build_object('pedido', false);
+  end if;
+  select exists (select 1 from public.discord_pedidos where vendedor_id = v.id) into v_pendente;
+  if v_pendente then
+    return jsonb_build_object('pedido', true);
+  end if;
+  if v.nome_discord_em is not null and v.nome_discord_em > now() - interval '2 minutes' then
+    return jsonb_build_object('pedido', false);
+  end if;
+  return jsonb_build_object('pedido', public._discord_buscar_nomes(v.id) > 0);
+end;
+$$;
+
 create or replace function public.discord_aplicar_nomes()
 returns jsonb
 language plpgsql volatile security definer
@@ -918,6 +1013,7 @@ grant execute on function public.salvar_token_bot(text) to authenticated;
 grant execute on function public.discord_status() to authenticated;
 grant execute on function public.discord_buscar_nomes(uuid) to authenticated;
 grant execute on function public.discord_aplicar_nomes() to authenticated;
+grant execute on function public.atualizar_meu_discord() to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Agendamento: relatório semanal toda segunda às 09:00 (horário de Brasília).

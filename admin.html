@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=3">
+<link rel="stylesheet" href="css/style.css?v=4">
 </head>
 <body>
 
@@ -160,6 +160,11 @@
         </div>
         <p id="cfg-bot-status" class="dica"></p>
 
+        <h2 style="margin-top:22px">Acesso ao painel por cargo</h2>
+        <p class="dica">Quem tiver um dos cargos marcados (e estiver cadastrado e ativo em Vendedores) acessa este painel. Os cargos são conferidos a cada login e a cada 10 minutos. Clique em <strong>Salvar configurações</strong> depois de marcar.</p>
+        <div id="cfg-cargos" class="lista-cargos"><p class="carregando">Carregando…</p></div>
+        <button id="cfg-carregar-cargos" type="button" class="botao botao-pequeno">🔄 Carregar cargos do servidor</button>
+
         <div class="grade-form">
           <div><label class="rotulo" for="cfg-nome">Nome da organização</label><input id="cfg-nome" type="text" maxlength="40"></div>
           <div><label class="rotulo" for="cfg-moeda">Símbolo da moeda</label><input id="cfg-moeda" type="text" maxlength="5"></div>
@@ -188,7 +193,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=3"></script>
-<script src="js/admin.js?v=4"></script>
+<script src="js/comum.js?v=4"></script>
+<script src="js/admin.js?v=5"></script>
 </body>
 </html>

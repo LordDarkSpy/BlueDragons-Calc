@@ -43,6 +43,12 @@
     async perfil() {
       const { data: { session } } = await BD.db.auth.getSession();
       if (!session) return null;
+      // Atualiza nome e cargos do Discord de quem entrou (a resposta chega em 1-2 s).
+      for (let i = 0; i < 3; i++) {
+        const { data: at, error: erroAt } = await BD.db.rpc('atualizar_meu_discord');
+        if (erroAt || !at || !at.pedido) break;
+        await new Promise((r) => setTimeout(r, 1200));
+      }
       const { data, error } = await BD.db.rpc('meu_perfil');
       if (error) throw error;
       const meta = session.user.user_metadata || {};
@@ -56,6 +62,12 @@
       const erro = params.get('error_description');
       if (erro) history.replaceState(null, '', location.pathname);
       return erro ? decodeURIComponent(erro.replace(/\+/g, ' ')) : '';
+    },
+
+    // Imagem do produto (se tiver) ou o emoji.
+    iconeProduto(p, classe) {
+      if (p.imagem) return `<img class="${classe || 'produto-img'}" src="${BD.esc(p.imagem)}" alt="" loading="lazy">`;
+      return BD.esc(p.icone || '📦');
     },
 
     lerSalvo(chave) {

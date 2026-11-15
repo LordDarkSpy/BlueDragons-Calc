@@ -27,6 +27,7 @@ js/admin.js          Lógica do painel
 supabase/schema.sql  Banco: tabelas, regras de acesso (RLS), funções e agendamento
 img/logo.png         Logo (Pixellab, usada sem alterações)
 img/tabela_v1.png    Tabela de preços enviada aos clientes
+img/produtos/*.svg   Ícones dos produtos (desenhos próprios; dá para trocar no painel)
 ```
 
 Ao trocar a tabela de preços, salve com um nome novo (`tabela_v2.png`) e atualize `index.html` e `js/calculadora.js`, para o Discord não mostrar a imagem antiga em cache.
@@ -65,6 +66,10 @@ O site mostra o nome que cada pessoa usa **no servidor** do Discord. Quem busca 
 2. Em **OAuth2 → URL Generator**, marque só o escopo `bot` (nenhuma permissão), abra o link gerado e adicione o bot ao servidor.
 3. No painel do site, aba **🔔 Discord** → *Nomes do servidor*: confira o **ID do servidor**, cole o **token do bot** e clique em **Salvar token**. O token vai para o cofre do Supabase (Vault) e não aparece mais no site.
 4. Na aba **Vendedores**, clique em **🔄 Atualizar nomes do Discord**. Depois disso os nomes se atualizam sozinhos a cada 10 minutos e sempre que alguém é cadastrado.
+
+#### Acesso ao painel por cargo
+
+Na aba **🔔 Discord** → *Acesso ao painel por cargo*, clique em **Carregar cargos do servidor**, marque os cargos que podem usar o painel e salve. Quem tiver um desses cargos (e estiver cadastrado e ativo em Vendedores) passa a ver o painel; ao perder o cargo no Discord, perde o acesso no próximo login ou em até 10 minutos. A opção *Administrador manual* do cadastro continua valendo para quem precisa de acesso sem o cargo.
 
 Para trocar de servidor (por exemplo, sair do servidor de testes), basta mudar o ID do servidor no painel, salvar e adicionar o bot ao novo servidor.
 

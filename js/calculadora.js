@@ -189,7 +189,7 @@
       linha.className = 'item-linha';
       linha.id = `linha-${produto.id}`;
       linha.innerHTML = `
-        <span class="item-icone" aria-hidden="true">${esc(produto.icone)}</span>
+        <span class="item-icone" aria-hidden="true">${BD.iconeProduto(produto)}</span>
         <div>
           <p class="item-nome">${esc(produto.nome)}</p>
           <p class="item-preco"></p>
@@ -338,7 +338,7 @@
 
   async function carregarCatalogo() {
     const [resProdutos, resParcerias] = await Promise.all([
-      db.from('produtos').select('id, nome, icone, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem').eq('ativo', true).order('ordem').order('nome'),
+      db.from('produtos').select('id, nome, icone, imagem, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem').eq('ativo', true).order('ordem').order('nome'),
       db.from('parcerias').select('id, nome').eq('ativo', true).order('nome'),
     ]);
     if (resProdutos.error) {

@@ -328,7 +328,13 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .item-linha.selecionado { border-color: var(--azul); }
 
-.item-icone { font-size: 1.8rem; width: 40px; text-align: center; }
+.item-icone { font-size: 1.8rem; width: 48px; text-align: center; display: flex; align-items: center; justify-content: center; }
+.produto-img { width: 44px; height: 44px; object-fit: contain; display: block; }
+.produto-img-pequena { width: 26px; height: 26px; object-fit: contain; vertical-align: middle; }
+.produto-tabela-icone { display: inline-flex; width: 28px; justify-content: center; vertical-align: middle; }
+.lista-cargos { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0 10px; }
+.cargo-opcao { margin: 0; }
+.cargo-cor { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 2px 0 4px; }
 .item-nome { margin: 0; font-weight: 600; }
 .item-preco { margin: 2px 0 0; color: var(--texto-suave); font-size: 0.82rem; }
 
