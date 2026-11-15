@@ -255,6 +255,20 @@ select * from (values
 ) as p (nome, icone, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem)
 where not exists (select 1 from public.produtos);
 
+-- Craft em lista: [{"material": "Ferro", "quantidade": 1}, ...] por unidade do produto.
+alter table public.produtos add column if not exists craft jsonb not null default '[]'
+  check (jsonb_typeof(craft) = 'array');
+alter table public.venda_itens add column if not exists craft jsonb not null default '[]';  -- total usado na linha
+
+-- Converte o formato antigo (placas + um material) e zera as colunas antigas (roda uma vez só).
+update public.produtos p set
+  craft = coalesce((
+    select jsonb_agg(jsonb_build_object('material', m.material, 'quantidade', m.quantidade) order by m.ord)
+    from (values (1, 'Placa', p.craft_placa), (2, coalesce(nullif(btrim(p.material_nome), ''), 'Material'), p.craft_material)) as m (ord, material, quantidade)
+    where m.quantidade > 0), '[]'::jsonb),
+  craft_placa = 0, craft_material = 0
+where p.craft = '[]'::jsonb and (p.craft_placa > 0 or p.craft_material > 0);
+
 -- Imagens próprias dos produtos iniciais (só preenche se ainda estiver vazio).
 update public.produtos p set imagem = 'img/produtos/' || i.arquivo
 from (values
@@ -346,6 +360,62 @@ as $$
         and v.cargos && coalesce(array(select jsonb_array_elements_text(coalesce(c.permissoes -> p_permissao, '[]'::jsonb))), '{}')
     ));
 $$;
+
+-- Produtos: categoria e materiais do craft reaproveitam a grafia já usada (ignorando maiúsculas),
+-- tiram espaços sobrando e juntam materiais repetidos.
+create or replace function public._produto_antes()
+returns trigger
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  e jsonb;
+  v_mat text;
+  v_qtd int;
+  v_padrao text;
+  v_lista jsonb := '[]'::jsonb;
+  v_idx int;
+begin
+  new.categoria := regexp_replace(btrim(coalesce(new.categoria, '')), '\s+', ' ', 'g');
+  if new.categoria = '' then new.categoria := 'Geral'; end if;
+  if length(new.categoria) > 30 then raise exception 'A categoria pode ter no máximo 30 caracteres.'; end if;
+  select categoria into v_padrao from public.produtos where id <> new.id and lower(categoria) = lower(new.categoria) limit 1;
+  new.categoria := coalesce(v_padrao, new.categoria);
+
+  if jsonb_typeof(coalesce(new.craft, '[]'::jsonb)) <> 'array' then raise exception 'Craft inválido.'; end if;
+  for e in select * from jsonb_array_elements(coalesce(new.craft, '[]'::jsonb)) loop
+    v_mat := regexp_replace(btrim(coalesce(e->>'material', '')), '\s+', ' ', 'g');
+    continue when v_mat = '';
+    if length(v_mat) > 30 then raise exception 'Nome de material muito longo (máximo 30 caracteres).'; end if;
+    begin
+      v_qtd := (e->>'quantidade')::int;
+    exception when others then
+      raise exception 'Quantidade inválida para o material %.', v_mat;
+    end;
+    if v_qtd is null or v_qtd < 1 or v_qtd > 9999 then raise exception 'A quantidade de % deve ser de 1 a 9999.', v_mat; end if;
+    v_padrao := null;
+    select m->>'material' into v_padrao
+    from public.produtos p2, jsonb_array_elements(p2.craft) m
+    where p2.id <> new.id and lower(m->>'material') = lower(v_mat) limit 1;
+    v_mat := coalesce(v_padrao, v_mat);
+    -- junta o mesmo material repetido
+    v_idx := null;
+    select (ord - 1)::int into v_idx from jsonb_array_elements(v_lista) with ordinality as x (m, ord)
+    where lower(m->>'material') = lower(v_mat);
+    if v_idx is null then
+      v_lista := v_lista || jsonb_build_array(jsonb_build_object('material', v_mat, 'quantidade', v_qtd));
+    else
+      v_lista := jsonb_set(v_lista, array[v_idx::text, 'quantidade'], to_jsonb(((v_lista->v_idx->>'quantidade')::int + v_qtd)));
+    end if;
+  end loop;
+  if jsonb_array_length(v_lista) > 15 then raise exception 'Use no máximo 15 materiais no craft.'; end if;
+  new.craft := v_lista;
+  return new;
+end;
+$$;
+drop trigger if exists produto_antes on public.produtos;
+create trigger produto_antes before insert or update on public.produtos
+  for each row execute function public._produto_antes();
 
 alter table public.admins enable row level security;
 alter table public.produtos enable row level security;
@@ -658,9 +728,7 @@ begin
     select p.id as produto_id, p.nome, p.icone, sum(i.quantidade)::int as quantidade,
            case when v_com then p.preco_com_parceria else p.preco_sem_parceria end as preco,
            round(sum(i.quantidade) * p.preco_com_parceria * v_pct, 2) as comissao,
-           sum(i.quantidade)::int * p.craft_placa as craft_placa,
-           sum(i.quantidade)::int * p.craft_material as craft_material,
-           p.material_nome
+           p.craft as craft_un
     from jsonb_to_recordset(p_itens) as i (produto_id uuid, quantidade int)
     join public.produtos p on p.id = i.produto_id and p.ativo
     where i.quantidade > 0
@@ -685,12 +753,12 @@ begin
           nullif(left(trim(coalesce(p_observacao, '')), 300), ''))
   returning id, numero into v_id, v_numero;
 
-  insert into public.venda_itens (venda_id, produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal,
-                                  comissao, craft_placa, craft_material, material_nome)
-  select v_id, l.produto_id, l.nome, l.icone, l.quantidade, l.preco, l.quantidade * l.preco,
-         l.comissao, l.craft_placa, l.craft_material, l.material_nome
+  insert into public.venda_itens (venda_id, produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal, comissao, craft)
+  select v_id, l.produto_id, l.nome, l.icone, l.quantidade, l.preco, l.quantidade * l.preco, l.comissao,
+         coalesce((select jsonb_agg(jsonb_build_object('material', e->>'material', 'quantidade', (e->>'quantidade')::int * l.quantidade))
+                   from jsonb_array_elements(coalesce(l.craft_un, '[]'::jsonb)) e), '[]'::jsonb)
   from jsonb_to_recordset(v_linhas) as l (produto_id uuid, nome text, icone text, quantidade int, preco numeric,
-                                          comissao numeric, craft_placa int, craft_material int, material_nome text)
+                                          comissao numeric, craft_un jsonb)
   order by l.nome;
 
   perform public._notificar_venda(v_id);
@@ -1040,6 +1108,16 @@ as $$
   v as (
     select ve.* from public.vendas ve, periodo
     where not ve.cancelada and ve.criado_em >= periodo.ini and ve.criado_em < periodo.fim
+  ),
+  -- materiais usados em cada item vendido
+  ic as (
+    select i.produto_nome, m.material, m.quantidade
+    from public.venda_itens i join v on v.id = i.venda_id
+    cross join lateral (
+      select e->>'material' as material, (e->>'quantidade')::int as quantidade from jsonb_array_elements(i.craft) e
+      union all select 'Placa', i.craft_placa where i.craft_placa > 0
+      union all select coalesce(i.material_nome, 'Material'), i.craft_material where i.craft_material > 0
+    ) m
   )
   select jsonb_build_object(
     'inicio', p_inicio,
@@ -1076,21 +1154,16 @@ as $$
       select jsonb_agg(x order by x.total desc) from (
         select i.produto_nome as nome, max(i.icone) as icone, max(pr.imagem) as imagem,
                sum(i.quantidade) as quantidade, sum(i.subtotal) as total,
-               sum(i.craft_placa) as craft_placa, sum(i.craft_material) as craft_material, max(i.material_nome) as material_nome
+               coalesce((select jsonb_agg(jsonb_build_object('nome', c.material, 'quantidade', c.qtd) order by c.material)
+                         from (select ic.material, sum(ic.quantidade) as qtd from ic where ic.produto_nome = i.produto_nome
+                               group by ic.material) c), '[]'::jsonb) as craft
         from public.venda_itens i join v on v.id = i.venda_id
         left join public.produtos pr on pr.id = i.produto_id
         group by i.produto_nome
       ) x), '[]'::jsonb),
     'craft', coalesce((
       select jsonb_agg(x order by x.nome) from (
-        select 'Placa' as nome, sum(i.craft_placa) as quantidade
-        from public.venda_itens i join v on v.id = i.venda_id
-        having sum(i.craft_placa) > 0
-        union all
-        select coalesce(i.material_nome, 'Material'), sum(i.craft_material)
-        from public.venda_itens i join v on v.id = i.venda_id
-        group by coalesce(i.material_nome, 'Material')
-        having sum(i.craft_material) > 0
+        select ic.material as nome, sum(ic.quantidade) as quantidade from ic group by ic.material having sum(ic.quantidade) > 0
       ) x), '[]'::jsonb)
   );
 $$;

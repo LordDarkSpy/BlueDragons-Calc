@@ -181,10 +181,7 @@
         titulo.textContent = categoria;
         els.listaItens.appendChild(titulo);
       }
-      const craft = [
-        produto.craft_placa ? `${produto.craft_placa} placa${produto.craft_placa === 1 ? '' : 's'}` : '',
-        produto.craft_material ? `${produto.craft_material} ${String(produto.material_nome || '').toLowerCase()}` : '',
-      ].filter(Boolean).join(' + ');
+      const craft = (produto.craft || []).map((m) => `${m.quantidade} ${m.material}`).join(' + ');
       const linha = document.createElement('div');
       linha.className = 'item-linha';
       linha.id = `linha-${produto.id}`;
@@ -338,7 +335,7 @@
 
   async function carregarCatalogo() {
     const [resProdutos, resParcerias] = await Promise.all([
-      db.from('produtos').select('id, nome, icone, imagem, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem').eq('ativo', true).order('ordem').order('nome'),
+      db.from('produtos').select('id, nome, icone, imagem, categoria, preco_com_parceria, preco_sem_parceria, craft, ordem').eq('ativo', true).order('ordem').order('nome'),
       db.from('parcerias').select('id, nome').eq('ativo', true).order('nome'),
     ]);
     if (resProdutos.error) {

@@ -344,7 +344,7 @@
       ...r.por_vendedor.map((x) => [x.nome, x.quantidade, x.total, x.comissao, x.pago || 0,
         Number(x.comissao) <= 0 ? 'Sem comissão' : Number(x.pendente) <= 0 ? 'Pago' : 'Pendente']), [],
       ['Parceria', 'Vendas', 'Total'], ...r.por_parceria.map((x) => [x.nome, x.quantidade, x.total]), [],
-      ['Produto', 'Quantidade', 'Total', 'Placas', 'Material'], ...r.por_produto.map((x) => [x.nome, x.quantidade, x.total, x.craft_placa, `${x.craft_material} ${x.material_nome || ''}`]), [],
+      ['Produto', 'Quantidade', 'Total', 'Craft usado'], ...r.por_produto.map((x) => [x.nome, x.quantidade, x.total, (x.craft || []).map((m) => `${m.quantidade} ${m.nome}`).join(' · ')]), [],
       ['Craft', 'Quantidade'], ...(r.craft || []).map((x) => [x.nome, x.quantidade]),
     ];
     baixarCSV(`relatorio-${r.inicio}.csv`, linhas);
@@ -475,16 +475,77 @@
   function campoHTML(c) {
     const id = `campo-${c.nome}`;
     const valor = c.valor ?? '';
+    if (c.tipo === 'craft') {
+      return `<div class="largura-total">
+        <span class="rotulo">${esc(c.rotulo)}</span>
+        <div id="${id}" class="editor-craft"></div>
+        <button type="button" class="botao botao-pequeno" data-craft-adicionar>+ Adicionar material</button>
+        <datalist id="lista-materiais">${(c.sugestoes || []).map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+        ${c.dica ? `<p class="dica">${esc(c.dica)}</p>` : ''}</div>`;
+    }
     if (c.tipo === 'checkbox') {
       return `<label class="checkbox largura-total"><input id="${id}" type="checkbox" ${valor ? 'checked' : ''}> ${esc(c.rotulo)}</label>`;
     }
     const entrada = c.tipo === 'textarea'
       ? `<textarea id="${id}" maxlength="${c.max || 300}" rows="3">${esc(valor)}</textarea>`
-      : `<input id="${id}" type="${c.tipo || 'text'}" value="${esc(valor)}" ${c.max ? `maxlength="${c.max}"` : ''} ${c.min !== undefined ? `min="${c.min}"` : ''} ${c.placeholder ? `placeholder="${esc(c.placeholder)}"` : ''} ${c.inputmode ? `inputmode="${c.inputmode}"` : ''} autocomplete="off">`;
+      : `<input id="${id}" type="${c.tipo || 'text'}" value="${esc(valor)}" ${c.sugestoes ? `list="lista-${c.nome}"` : ''} ${c.max ? `maxlength="${c.max}"` : ''} ${c.min !== undefined ? `min="${c.min}"` : ''} ${c.placeholder ? `placeholder="${esc(c.placeholder)}"` : ''} ${c.inputmode ? `inputmode="${c.inputmode}"` : ''} autocomplete="off">`;
     return `<div class="${c.largo ? 'largura-total' : ''}">
       <label class="rotulo" for="${id}">${esc(c.rotulo)} ${c.obrigatorio ? '<span class="obrigatorio">*</span>' : ''}</label>
-      ${entrada}${c.dica ? `<p class="dica">${esc(c.dica)}</p>` : ''}</div>`;
+      ${entrada}${c.sugestoes ? `<datalist id="lista-${c.nome}">${c.sugestoes.map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>` : ''}${c.dica ? `<p class="dica">${esc(c.dica)}</p>` : ''}</div>`;
   }
+
+  // ---- editor de craft: uma linha por material (escolher um existente ou digitar novo) + quantidade
+  function adicionarLinhaCraft(caixa, m) {
+    const linha = document.createElement('div');
+    linha.className = 'linha-craft';
+    linha.innerHTML = `<input type="text" class="craft-material" list="lista-materiais" maxlength="30" placeholder="Material (ex.: Ferro)" value="${esc((m && m.material) || '')}" autocomplete="off" aria-label="Material">
+      <input type="number" class="craft-quantidade" min="1" max="9999" step="1" value="${esc(String((m && m.quantidade) || 1))}" aria-label="Quantidade por unidade">
+      <button type="button" class="botao-perigo botao-pequeno" data-craft-remover aria-label="Remover material">×</button>`;
+    caixa.appendChild(linha);
+    return linha;
+  }
+
+  function lerCraft(caixa) {
+    const conhecidos = materiaisConhecidos();
+    const lista = [];
+    caixa.querySelectorAll('.linha-craft').forEach((l) => {
+      let material = l.querySelector('.craft-material').value.replace(/\s+/g, ' ').trim();
+      if (!material) return;
+      const qtd = Number(l.querySelector('.craft-quantidade').value);
+      if (!Number.isInteger(qtd) || qtd < 1 || qtd > 9999) throw new Error(`A quantidade de "${material}" deve ser um número inteiro de 1 a 9999.`);
+      const igual = conhecidos.find((x) => semAcento(x) === semAcento(material));
+      if (igual) material = igual; // mantém a mesma escrita
+      const ja = lista.find((x) => semAcento(x.material) === semAcento(material));
+      if (ja) ja.quantidade += qtd; else lista.push({ material, quantidade: qtd });
+    });
+    return lista;
+  }
+
+  function materiaisConhecidos() {
+    const mapa = new Map();
+    cache.produtos.forEach((p) => (p.craft || []).forEach((m) => { const k = semAcento(m.material); if (!mapa.has(k)) mapa.set(k, m.material); }));
+    return [...mapa.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }
+
+  function categoriasConhecidas() {
+    const mapa = new Map();
+    cache.produtos.forEach((p) => { const k = semAcento(p.categoria); if (p.categoria && !mapa.has(k)) mapa.set(k, p.categoria); });
+    return [...mapa.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }
+
+  function textoCraft(lista) {
+    return (lista || []).map((m) => `${m.quantidade} ${m.material}`).join(' · ');
+  }
+
+  $('edicao-campos').addEventListener('click', (e) => {
+    if (e.target.closest('[data-craft-adicionar]')) {
+      const caixa = $('edicao-campos').querySelector('.editor-craft');
+      adicionarLinhaCraft(caixa).querySelector('input').focus();
+      return;
+    }
+    const remover = e.target.closest('[data-craft-remover]');
+    if (remover) remover.closest('.linha-craft').remove();
+  });
 
   function abrirEdicao(titulo, campos, salvar) {
     $('edicao-titulo').textContent = titulo;
@@ -494,12 +555,16 @@
       const valores = {};
       campos.forEach((c) => {
         const el = $(`campo-${c.nome}`);
-        valores[c.nome] = c.tipo === 'checkbox' ? el.checked : el.value.trim();
+        valores[c.nome] = c.tipo === 'craft' ? lerCraft(el) : c.tipo === 'checkbox' ? el.checked : el.value.trim();
       });
       const faltando = campos.find((c) => c.obrigatorio && valores[c.nome] === '');
       if (faltando) throw new Error(`Preencha o campo "${faltando.rotulo}".`);
       await salvar(valores);
     };
+    campos.filter((c) => c.tipo === 'craft').forEach((c) => {
+      const lista = (c.valor || []).length ? c.valor : [{ material: '', quantidade: 1 }];
+      lista.forEach((m) => adicionarLinhaCraft($(`campo-${c.nome}`), m));
+    });
     const primeiro = $('edicao-campos').querySelector('input, textarea');
     BD.abrirModal($('modal-edicao'), primeiro);
   }
@@ -1136,7 +1201,7 @@
           <td>${esc(p.categoria)}</td>
           <td class="num">${formatarValor(p.preco_com_parceria)}</td>
           <td class="num">${formatarValor(p.preco_sem_parceria)}</td>
-          <td class="dica">${p.craft_placa} placa · ${p.craft_material} ${esc(String(p.material_nome).toLowerCase())}</td>
+          <td class="dica">${esc(textoCraft(p.craft)) || '—'}</td>
           <td>${etiquetaAtivo(p.ativo)}</td>
           <td class="acoes">${pode('gerenciar_produtos') ? `
             <button type="button" class="botao botao-pequeno" data-editar-produto="${esc(p.id)}">Editar</button>
@@ -1148,30 +1213,30 @@
 
   function editarProduto(p) {
     const novo = !p;
-    p = p || { icone: '📦', categoria: 'Geral', craft_placa: 0, craft_material: 0, material_nome: 'Metal', ativo: true, ordem: (cache.produtos.length + 1) * 10 };
+    p = p || { icone: '📦', categoria: '', craft: [], ativo: true, ordem: (cache.produtos.length + 1) * 10 };
     abrirEdicao(novo ? 'Novo produto' : `Editar ${p.nome}`, [
       { nome: 'icone', rotulo: 'Ícone (emoji)', valor: p.icone, max: 8, dica: 'Usado no Discord e quando não há imagem.' },
       { nome: 'imagem', rotulo: 'Imagem', valor: p.imagem, max: 300, placeholder: 'img/produtos/serra.svg ou https://…', dica: 'Caminho no site ou link de uma imagem. Deixe vazio para usar o emoji.' },
       { nome: 'nome', rotulo: 'Nome', valor: p.nome, obrigatorio: true, max: 60 },
-      { nome: 'categoria', rotulo: 'Categoria', valor: p.categoria, max: 30, placeholder: 'Ex.: Pendrives, Ferramentas' },
+      { nome: 'categoria', rotulo: 'Categoria', valor: p.categoria, max: 30, placeholder: 'Escolha ou digite uma nova', sugestoes: categoriasConhecidas(),
+        dica: 'Clique para ver as que já existem, ou digite uma nova.' },
       { nome: 'ordem', rotulo: 'Ordem na lista', tipo: 'number', valor: p.ordem, dica: 'Menor aparece primeiro.' },
       { nome: 'preco_com_parceria', rotulo: 'Preço parceria', tipo: 'number', min: 0, valor: p.preco_com_parceria, obrigatorio: true },
       { nome: 'preco_sem_parceria', rotulo: 'Preço pista', tipo: 'number', min: 0, valor: p.preco_sem_parceria, obrigatorio: true },
-      { nome: 'craft_placa', rotulo: 'Craft: placas por unidade', tipo: 'number', min: 0, valor: p.craft_placa },
-      { nome: 'craft_material', rotulo: 'Craft: material por unidade', tipo: 'number', min: 0, valor: p.craft_material },
-      { nome: 'material_nome', rotulo: 'Nome do material', valor: p.material_nome, max: 20, placeholder: 'Plástico, Metal…' },
+      { nome: 'craft', rotulo: 'Craft: materiais usados por unidade', tipo: 'craft', valor: p.craft, sugestoes: materiaisConhecidos(),
+        dica: 'Ex.: 1 Ferro, 1 Plástico, 1 Vidro. Escolha um material da lista ou digite um novo.' },
       { nome: 'ativo', rotulo: 'Ativo (aparece na calculadora)', tipo: 'checkbox', valor: p.ativo },
     ], async (val) => {
       const com = Number(val.preco_com_parceria);
       const sem = Number(val.preco_sem_parceria);
       if (!(com >= 0) || !(sem >= 0)) throw new Error('Os preços devem ser números maiores ou iguais a zero.');
-      const placa = parseInt(val.craft_placa || '0', 10);
-      const material = parseInt(val.craft_material || '0', 10);
-      if (!(placa >= 0) || !(material >= 0)) throw new Error('As quantidades de craft devem ser números inteiros maiores ou iguais a zero.');
+      // categoria existente: mesma escrita
+      const categoria = val.categoria.replace(/\s+/g, ' ').trim();
+      const catIgual = categoriasConhecidas().find((x) => semAcento(x) === semAcento(categoria));
       const dados = {
-        icone: val.icone || '📦', imagem: val.imagem || null, nome: val.nome, categoria: val.categoria || 'Geral',
+        icone: val.icone || '📦', imagem: val.imagem || null, nome: val.nome, categoria: catIgual || categoria || 'Geral',
         preco_com_parceria: com, preco_sem_parceria: sem,
-        craft_placa: placa, craft_material: material, material_nome: val.material_nome || 'Material',
+        craft: val.craft,
         ordem: parseInt(val.ordem, 10) || 0, ativo: val.ativo,
       };
       falhou(novo ? await db.from('produtos').insert(dados) : await db.from('produtos').update(dados).eq('id', p.id));

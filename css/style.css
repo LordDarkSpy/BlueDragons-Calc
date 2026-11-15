@@ -979,3 +979,8 @@ body::before {
 .permissao .dica { margin: 0; }
 .motivo-cancelamento { margin-top: 4px; font-size: 0.78rem; color: var(--vermelho); }
 .itens-venda li { display: flex; align-items: center; gap: 5px; }
+
+/* Editor de craft (materiais por unidade) */
+.editor-craft { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 8px; }
+.linha-craft { display: grid; grid-template-columns: minmax(0, 1fr) 90px auto; gap: 6px; align-items: center; }
+.linha-craft .craft-quantidade { text-align: right; }
