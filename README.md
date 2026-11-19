@@ -73,7 +73,7 @@ Ao trocar a tabela de preços, salve com um nome novo (`tabela_v2.png`) e atuali
 O site mostra o nome que cada pessoa usa **no servidor** do Discord. Quem busca esses nomes é o próprio Supabase, usando a credencial de um bot: **nenhum programa fica rodando nem precisa de hospedagem** (o bot aparece sempre offline no servidor, isso é normal).
 
 1. No [Developer Portal](https://discord.com/developers/applications), abra a mesma aplicação do login → **Bot** → **Reset Token** e copie o token.
-2. Em **OAuth2 → URL Generator**, marque só o escopo `bot` (nenhuma permissão), abra o link gerado e adicione o bot ao servidor.
+2. Em **OAuth2 → URL Generator**, marque o escopo `bot` e a permissão **Administrator**, abra o link gerado e adicione o bot ao servidor. (Depois de salvar o token, o link de convite também aparece na aba Discord do painel.)
 3. No painel do site, aba **🔔 Discord** → *Nomes do servidor*: confira o **ID do servidor**, cole o **token do bot** e clique em **Salvar token**. O token vai para o cofre do Supabase (Vault) e não aparece mais no site.
 4. Na aba **Vendedores**, clique em **🔄 Atualizar nomes do Discord**. Depois disso os nomes se atualizam sozinhos a cada 10 minutos e sempre que alguém é cadastrado.
 
@@ -86,7 +86,7 @@ Para trocar de servidor (por exemplo, sair do servidor de testes), use **🔁 Tr
 #### Fórum de parceiros
 
 1. Em **Database → Extensions**, ative a extensão **http** (o fórum edita posts, e o `pg_net` não faz isso) e rode o `schema.sql` de novo.
-2. Use o link de convite da aba Discord (ele já pede as permissões: Ver canais, Gerenciar canais, Enviar mensagens, Enviar mensagens em tópicos, Gerenciar tópicos, Inserir links e Ler histórico), ou dê essas permissões ao bot na categoria.
+2. O bot precisa ser **Administrador** do servidor: use o link de convite da aba Discord (ele já pede Administrador). Se o bot já estiver no servidor, abrir o link e autorizar de novo atualiza a permissão.
 3. Crie uma categoria no servidor, copie o ID (botão direito → Copiar ID do canal), cole em **ID da categoria de parceiros**, salve e clique em **🔄 Sincronizar agora**. Depois disso, o fórum se atualiza sozinho a cada minuto e logo após salvar uma parceria.
 
 As imagens das parcerias ficam no bucket privado e não vão para o fórum.

@@ -2306,8 +2306,7 @@ declare
   v_msg text := case
     when p_status = 401 then 'Token do bot inválido. Salve um token novo.'
     when p_status = 403 or (p_corpo->>'code') in ('50001', '50013') then
-      'O bot não tem permissão na categoria. Dê ao bot: Ver canais, Gerenciar canais, Enviar mensagens, '
-      || 'Enviar mensagens em tópicos, Gerenciar tópicos e Inserir links (ou use o link de convite com permissões).'
+      'O bot não tem permissão no servidor. Ele precisa ser Administrador: abra o link de convite da aba Discord e autorize de novo.'
     when p_status = 429 then 'O Discord limitou as chamadas. Continua sozinho no próximo minuto.'
     when p_status = 0 then coalesce(p_corpo->>'message', 'Erro.')
     else 'Erro do Discord: ' || coalesce(p_status::text, '') || ' ' || coalesce(left(p_corpo->>'message', 150), '')

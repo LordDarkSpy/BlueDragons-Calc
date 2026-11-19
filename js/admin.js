@@ -1346,8 +1346,8 @@
   // ================================================================ configurações / Discord (só DEV)
 
   const REGEX_WEBHOOK = /^https:\/\/(canary\.|ptb\.)?(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
-  // Ver canais, Enviar mensagens, Gerenciar canais, Inserir links, Ler histórico, Gerenciar tópicos e Enviar mensagens em tópicos.
-  const PERMISSOES_BOT = '292057861136';
+  // O bot entra como Administrador do servidor (cobre nomes, cargos e o fórum de parceiros).
+  const PERMISSOES_BOT = '8';
   let configAtual = {};
   let statusBot = {};
 
