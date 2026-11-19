@@ -18,7 +18,6 @@
   const PERMISSOES = [
     { grupo: 'Páginas', itens: [
       { id: 'ver_calculadora', nome: '🧮 Calculadora (ver e simular)' },
-      { id: 'registrar_venda', nome: '📝 Registrar vendas (vendedor)' },
       { id: 'ver_ranking', nome: '🏆 Ranking' },
       { id: 'ver_vendas', nome: '🧾 Vendas (página de vendas)' },
       { id: 'ver_painel', nome: '⚙️ Painel (entrar)' },
@@ -31,6 +30,7 @@
       { id: 'ver_gestao', nome: '🛡️ Gestão (só ver)' },
     ] },
     { grupo: 'Ações', itens: [
+      { id: 'registrar_venda', nome: '🛒 Realizar vendas (sem isto, a calculadora só simula)' },
       { id: 'editar_parcerias', nome: 'Cadastrar e editar parcerias' },
       { id: 'encerrar_parceria', nome: 'Encerrar / reativar parcerias' },
       { id: 'registrar_pagamento', nome: 'Registrar pagamentos' },
@@ -542,7 +542,7 @@
 
   // Perfis que um perfil pode dar: o líder dá qualquer um; os outros, só perfis com permissões que eles têm.
   function perfisQuePossoDar(atualId) {
-    return cache.perfis.filter((p) => meuPerfil.lider || p.id === atualId || (p.permissoes || []).every((x) => pode(x)));
+    return cache.perfis.filter((p) => (!p.padrao || p.id === atualId) && (meuPerfil.lider || p.id === atualId || (p.permissoes || []).every((x) => pode(x))));
   }
 
   function editarVendedor(v) {
@@ -558,7 +558,7 @@
       { nome: "id_pagamento", rotulo: "ID para pagamento", valor: v.id_pagamento, max: 40,
         dica: "ID usado para receber a comissão. Aparece para quem for pagar, logo acima do valor." },
       { nome: "perfil_id", rotulo: "Perfil", tipo: "select", valor: v.perfil_id || '', largo: true, desativado: proprio && !meuPerfil.lider,
-        opcoes: [{ valor: '', texto: '— sem perfil (só pelos cargos do Discord) —' },
+        opcoes: [{ valor: '', texto: '— só o perfil padrão e os cargos do Discord —' },
           ...perfisQuePossoDar(v.perfil_id).map((p) => ({ valor: p.id, texto: p.nome }))],
         dica: proprio && !meuPerfil.lider ? "Você não pode mudar o seu próprio perfil." : "Define o que a pessoa vê e faz. Vendedor = calculadora + registrar vendas + ranking." },
       { nome: "ativo", rotulo: "Ativo (pode entrar no site)", tipo: "checkbox", valor: v.ativo },
@@ -592,7 +592,8 @@
     if (v.admin) partes.push('<span class="etiqueta parceria">👑 Líder</span>');
     if (doCadastro) partes.push(`<span class="etiqueta">${esc(doCadastro.nome)}</span>`);
     porCargo.forEach((p) => partes.push(`<span class="etiqueta">${esc(p.nome)}</span>`));
-    if (!partes.length) return '<span class="dica">sem perfil</span>';
+    const padrao = cache.perfis.find((p) => p.padrao);
+    if (!partes.length) return padrao ? `<span class="dica">só o padrão (${esc(padrao.nome)})</span>` : '<span class="dica">sem perfil</span>';
     return partes.join(' ') + (porCargo.length ? `<div class="dica">pelo cargo: ${esc(porCargo.map((p) => p.nome).join(', '))}</div>` : '');
   }
 
@@ -1277,16 +1278,18 @@
     return `<fieldset class="perfil-card" data-perfil="${esc(p.id)}">
       <div class="perfil-topo">
         <input class="perfil-nome" type="text" maxlength="40" value="${esc(p.nome || '')}" placeholder="Nome do perfil" aria-label="Nome do perfil">
-        <span class="dica">${usuarios} usuário${usuarios === 1 ? '' : 's'}</span>
-        <button type="button" class="botao-perigo botao-pequeno" data-remover-perfil aria-label="Excluir perfil">Excluir</button>
-      </div>
+        ${p.padrao
+          ? '<span class="chip">⭐ Padrão · vale para todos os usuários cadastrados</span>'
+          : `<span class="dica">${usuarios} usuário${usuarios === 1 ? '' : 's'}</span>
+        <button type="button" class="botao-perigo botao-pequeno" data-remover-perfil aria-label="Excluir perfil">Excluir</button>`}
+      </div>${p.padrao ? '<p class="dica">Todo usuário cadastrado recebe este perfil, além do perfil do cadastro e dos cargos. Ele não pode ser excluído; para não dar nada a todos, desmarque as permissões.</p>' : ''}
       <div class="perfil-grupos">${PERMISSOES.map((g) => `
         <div class="perfil-grupo">
           <strong>${esc(g.grupo)}</strong>${g.dica ? `<span class="dica">${esc(g.dica)}</span>` : ''}
           ${g.itens.map((i) => `<label class="checkbox"><input type="checkbox" data-permissao="${i.id}" ${marcadas.has(i.id) ? 'checked' : ''}> ${esc(i.nome)}</label>`).join('')}
         </div>`).join('')}
       </div>
-      <details class="perfil-cargos" ${cargos.size ? 'open' : ''}>
+      <details class="perfil-cargos" ${cargos.size ? 'open' : ''} ${p.padrao ? 'hidden' : ''}>
         <summary>Cargos do Discord que dão este perfil <span class="dica">(${cargos.size} marcado${cargos.size === 1 ? '' : 's'})</span></summary>
         ${cargosServidor.length ? `<div class="lista-cargos">${cargosServidor.map((c) => `
           <label class="checkbox cargo-opcao"><input type="checkbox" data-cargo="${esc(c.id)}" ${cargos.has(c.id) ? 'checked' : ''}>
@@ -1374,7 +1377,7 @@
     const card = btn.closest('[data-perfil]');
     const id = card.dataset.perfil;
     const usuarios = cache.vendedores.filter((v) => v.perfil_id === id).length;
-    if (usuarios && !confirm(`${usuarios} usuário(s) usam este perfil e ficarão sem perfil (só com o que os cargos derem). Excluir mesmo? (só vale ao salvar)`)) return;
+    if (usuarios && !confirm(`${usuarios} usuário(s) usam este perfil e ficarão só com o perfil padrão e o que os cargos derem. Excluir mesmo? (só vale ao salvar)`)) return;
     card.remove();
   });
 

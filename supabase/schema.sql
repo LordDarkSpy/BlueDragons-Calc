@@ -268,6 +268,9 @@ create table if not exists public.perfis (
   criado_em timestamptz not null default now()
 );
 create unique index if not exists perfis_nome_idx on public.perfis (lower(nome));
+-- padrao: o perfil que vale para todo usuário cadastrado (só um).
+alter table public.perfis add column if not exists padrao boolean not null default false;
+create unique index if not exists perfis_padrao_idx on public.perfis ((true)) where padrao;
 alter table public.vendedores add column if not exists perfil_id uuid references public.perfis (id) on delete set null;
 
 -- Novidades mostradas ao entrar no site (preços, produtos e parcerias).
@@ -440,8 +443,8 @@ as $$ select array[
   'ver_relatorio', 'ver_vendas', 'ver_usuarios', 'ver_parcerias', 'ver_produtos', 'ver_gestao',
   'editar_parcerias', 'encerrar_parceria', 'registrar_pagamento', 'cancelar_venda', 'gerenciar_vendedores', 'gerenciar_produtos', 'enviar_notificacoes'] $$;
 
--- Permissões do usuário logado: o líder tem todas; os outros, as do perfil do cadastro
--- somadas às dos perfis ligados a cargos que a pessoa tem no Discord.
+-- Permissões do usuário logado: o líder tem todas; os outros, as do perfil padrão, as do perfil do cadastro
+-- e as dos perfis ligados a cargos que a pessoa tem no Discord, somadas.
 create or replace function public._minhas_permissoes()
 returns text[]
 language sql stable security definer
@@ -451,7 +454,7 @@ as $$
   else coalesce((
     select array_agg(distinct x)
     from public.vendedores v
-    join public.perfis pf on pf.id = v.perfil_id or pf.cargos && v.cargos
+    join public.perfis pf on pf.padrao or pf.id = v.perfil_id or pf.cargos && v.cargos
     cross join unnest(pf.permissoes) x
     where v.ativo and v.discord_id = public._discord_id()
   ), '{}') end;
@@ -524,6 +527,41 @@ begin
   end loop;
   update public.vendedores set perfil_id = v_vendedor where perfil_id is null;
 end $$;
+
+-- Perfil padrão: vale para todo usuário cadastrado (sem precisar de cargo nem de perfil no cadastro).
+-- Começa só com a calculadora (ver e simular, sem registrar vendas). Não pode ser excluído.
+do $$
+begin
+  if exists (select 1 from public.perfis where padrao) then return; end if;
+  update public.perfis set padrao = true, ordem = 0
+   where id = (select id from public.perfis where lower(nome) = lower('Só calculadora (visualizar)') limit 1);
+  if not found then
+    insert into public.perfis (nome, permissoes, ordem, padrao)
+    values ('Visualizar calculadora (padrão)', array['ver_calculadora'], 0, true);
+  end if;
+end $$;
+
+create or replace function public._perfil_padrao_protegido()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if tg_op = 'DELETE' then
+    if old.padrao and auth.uid() is not null then
+      raise exception 'O perfil padrão não pode ser excluído: ele vale para todos os usuários cadastrados. Tire as permissões dele se não quiser dar nada.';
+    end if;
+    return old;
+  end if;
+  if auth.uid() is not null then
+    new.padrao := case when tg_op = 'INSERT' then false else old.padrao end;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists perfis_padrao_protegido on public.perfis;
+create trigger perfis_padrao_protegido before insert or update or delete on public.perfis
+  for each row execute function public._perfil_padrao_protegido();
 
 -- Produtos: categoria e materiais do craft reaproveitam a grafia já usada (ignorando maiúsculas),
 -- tiram espaços sobrando e juntam materiais repetidos.
