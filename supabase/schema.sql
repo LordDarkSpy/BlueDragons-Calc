@@ -112,6 +112,10 @@ create index if not exists vendas_criado_em_idx on public.vendas (criado_em);
 alter table public.vendas add column if not exists cancelada_motivo text;
 alter table public.vendas add column if not exists cancelada_por text;
 create index if not exists vendas_vendedor_idx on public.vendas (vendedor_id);
+-- Venda cancelada não volta: é refeita na semana atual (refazer_venda), e as duas ficam ligadas.
+alter table public.vendas add column if not exists refeita_como uuid references public.vendas (id) on delete set null;
+alter table public.vendas add column if not exists refeita_como_numero bigint;
+alter table public.vendas add column if not exists refeita_de_numero bigint;
 
 create table if not exists public.venda_itens (
   id bigint generated always as identity primary key,
@@ -1427,16 +1431,51 @@ begin
 end;
 $$;
 
+-- Reativar não é permitido: a venda voltaria a contar numa semana que já pode estar fechada
+-- (relatório enviado, comissão paga). O caminho é refazer a venda na semana atual.
 create or replace function public.reativar_venda(p_id uuid)
 returns void
 language plpgsql volatile security definer
 set search_path = public
 as $$
 begin
-  if not public.tem_permissao('cancelar_venda') then raise exception 'Você não tem permissão para reativar vendas.'; end if;
-  update public.vendas set cancelada = false, cancelada_em = null, cancelada_motivo = null, cancelada_por = null
-  where id = p_id and cancelada;
-  if not found then raise exception 'Venda não encontrada ou não está cancelada.'; end if;
+  raise exception 'Uma venda cancelada não pode ser reativada: ela voltaria a contar na semana em que foi feita, que pode já ter relatório enviado e comissão paga. Use "Refazer na semana atual" para registrar a mesma venda de novo.';
+end;
+$$;
+
+-- Registra de novo uma venda cancelada, com os mesmos itens, valores, cliente e vendedor, na data de hoje.
+create or replace function public.refazer_venda(p_id uuid)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v public.vendas;
+  v_id uuid;
+  v_numero bigint;
+begin
+  if not public.tem_permissao('cancelar_venda') then raise exception 'Você não tem permissão para refazer vendas.'; end if;
+  select * into v from public.vendas where id = p_id for update;
+  if v.id is null then raise exception 'Venda não encontrada.'; end if;
+  if not v.cancelada then raise exception 'Só uma venda cancelada pode ser refeita.'; end if;
+  if v.refeita_como is not null or v.refeita_como_numero is not null then
+    raise exception 'A venda #% já foi refeita como venda #%.', v.numero, v.refeita_como_numero;
+  end if;
+
+  insert into public.vendas (vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao, refeita_de_numero)
+  values (v.vendedor_id, v.vendedor_nome, v.parceria_id, v.parceria_nome, v.com_parceria, v.cliente, v.total, v.comissao,
+          left(concat_ws(' · ', 'Refeita da venda #' || v.numero || ' por ' || public._nome_logado(), v.observacao), 300), v.numero)
+  returning id, numero into v_id, v_numero;
+
+  insert into public.venda_itens (venda_id, produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal, comissao,
+                                  craft_placa, craft_material, material_nome, craft)
+  select v_id, produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal, comissao,
+         craft_placa, craft_material, material_nome, craft
+  from public.venda_itens where venda_id = v.id order by id;
+
+  update public.vendas set refeita_como = v_id, refeita_como_numero = v_numero where id = v.id;
+  perform public._notificar_venda(v_id);
+  return jsonb_build_object('id', v_id, 'numero', v_numero, 'total', v.total);
 end;
 $$;
 
@@ -2910,6 +2949,7 @@ grant execute on function public.atualizar_meu_discord() to authenticated;
 grant execute on function public.minhas_novidades(boolean) to authenticated;
 grant execute on function public.marcar_novidades_vistas() to authenticated;
 grant execute on function public.novidades_pendentes() to authenticated;
+grant execute on function public.refazer_venda(uuid) to authenticated;
 grant execute on function public.emojis_atualizar() to authenticated;
 grant execute on function public.decidir_novidades(bigint[], boolean, text) to authenticated;
 grant execute on function public.enviar_notificacao(text, text, text, text) to authenticated;

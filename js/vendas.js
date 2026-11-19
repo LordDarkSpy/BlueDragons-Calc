@@ -1,5 +1,5 @@
 // Página de vendas (fora do painel). Quem pode abrir: perfis com "Vendas";
-// cancelar/reativar: perfis com "Cancelar / reativar vendas". O banco confere as duas.
+// cancelar/refazer: perfis com "Cancelar / reativar vendas". O banco confere as duas (reativar não é permitido: refaz na semana atual).
 (function () {
   const { db, esc, formatarValor } = BD;
   const $ = (id) => document.getElementById(id);
@@ -103,7 +103,7 @@
     const ate = $('vendas-ate').value;
 
     let consulta = db.from('vendas')
-      .select('id, numero, criado_em, vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao, cancelada, cancelada_em, cancelada_motivo, cancelada_por, venda_itens(produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal)')
+      .select('id, numero, criado_em, vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao, cancelada, cancelada_em, cancelada_motivo, cancelada_por, refeita_como_numero, refeita_de_numero, venda_itens(produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal)')
       .order('criado_em', { ascending: false })
       .limit(1000);
     if (de) consulta = consulta.gte('criado_em', new Date(`${de}T00:00:00`).toISOString());
@@ -143,11 +143,12 @@
           <td>${v.com_parceria ? '<span class="etiqueta parceria">Parceria</span>' : '<span class="etiqueta">Pista</span>'}</td>
           <td><ul class="itens-venda">${v.venda_itens.map((i) => `<li>${BD.iconeProduto(produtoDoItem(i), 'chip-img')} ${esc(i.produto_nome)} x${i.quantidade}</li>`).join('')}</ul>
             ${v.cancelada && v.cancelada_motivo ? `<div class="motivo-cancelamento">⛔ Cancelada${v.cancelada_por ? ' por ' + esc(v.cancelada_por) : ''}${v.cancelada_em ? ' em ' + esc(BD.dataHoraBR(v.cancelada_em)) : ''}: ${esc(v.cancelada_motivo)}</div>` : ''}
+            ${v.refeita_como_numero ? `<div class="dica">🔁 Refeita como venda #${esc(String(v.refeita_como_numero))}</div>` : ''}
             ${v.observacao ? `<div class="dica">📝 ${esc(v.observacao)}</div>` : ''}</td>
           <td class="num"><strong>${formatarValor(v.total)}</strong></td>
           <td class="num">${formatarValor(v.comissao)}</td>
           ${acoes ? `<td class="acoes">${v.cancelada
-            ? `<button type="button" class="botao botao-pequeno" data-reativar="${esc(v.id)}">Reativar</button>`
+            ? (v.refeita_como_numero ? '' : `<button type="button" class="botao botao-pequeno" data-reativar="${esc(v.id)}">Reativar</button>`)
             : `<button type="button" class="botao-perigo botao-pequeno" data-cancelar="${esc(v.id)}">Cancelar</button>`}</td>` : ''}
         </tr>`).join('')}
       </tbody></table>`;
@@ -159,10 +160,43 @@
     const botao = e.target.closest('[data-cancelar], [data-reativar]');
     if (!botao) return;
     if (botao.dataset.cancelar) return abrirCancelarVenda(botao.dataset.cancelar);
-    botao.disabled = true;
-    const { error } = await db.rpc('reativar_venda', { p_id: botao.dataset.reativar });
-    BD.toast(error ? BD.mensagemErro(error) : 'Venda reativada.', error ? 'erro' : 'ok');
+    abrirRefazer(botao.dataset.reativar);
+  });
+
+  // Reativar não é permitido: explica o motivo e oferece refazer a venda na semana atual.
+  let vendaRefazendo = null;
+  function abrirRefazer(id) {
+    const v = vendas.find((x) => x.id === id);
+    if (!v) return;
+    vendaRefazendo = v;
+    $('refazer-titulo').textContent = `Reativar venda #${v.numero}`;
+    $('refazer-resumo').innerHTML = `
+      <p><strong>${esc(v.vendedor_nome)}</strong> · ${v.com_parceria ? 'Parceria' : 'Pista'}${v.cliente || v.parceria_nome ? ' · ' + esc(v.cliente || v.parceria_nome) : ''}</p>
+      <ul class="itens-venda">${v.venda_itens.map((i) => `<li>${BD.iconeProduto(produtoDoItem(i), 'chip-img')} ${esc(i.produto_nome)} x${i.quantidade} — ${formatarValor(i.subtotal)}</li>`).join('')}</ul>
+      <p>Total <strong>${formatarValor(v.total)}</strong> · Comissão ${formatarValor(v.comissao)}</p>
+      <p class="dica">Feita em ${esc(BD.dataHoraBR(v.criado_em))}${v.cancelada_motivo ? ' · cancelada: ' + esc(v.cancelada_motivo) : ''}</p>`;
+    $('refazer-erro').hidden = true;
+    $('refazer-confirmar').disabled = false;
+    BD.abrirModal($('modal-refazer'), $('refazer-confirmar'));
+  }
+
+  $('refazer-confirmar').addEventListener('click', async () => {
+    $('refazer-confirmar').disabled = true;
+    const { data, error } = await db.rpc('refazer_venda', { p_id: vendaRefazendo.id });
+    if (error) {
+      $('refazer-erro').textContent = BD.mensagemErro(error);
+      $('refazer-erro').hidden = false;
+      $('refazer-confirmar').disabled = false;
+      return;
+    }
+    BD.fecharModal($('modal-refazer'));
+    BD.toast(`Venda refeita na semana atual como #${data.numero}.`, 'ok');
     carregarVendas();
+  });
+  $('refazer-voltar').addEventListener('click', () => BD.fecharModal($('modal-refazer')));
+  $('modal-refazer').addEventListener('click', (e) => { if (e.target === $('modal-refazer')) BD.fecharModal($('modal-refazer')); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('modal-refazer').hidden) BD.fecharModal($('modal-refazer'));
   });
 
   let vendaCancelando = null;
