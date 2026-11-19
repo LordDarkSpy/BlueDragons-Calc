@@ -7,7 +7,7 @@
     return;
   }
 
-  const cache = { vendedores: [], parcerias: [], produtos: [], vendas: [], perfis: [] };
+  const cache = { vendedores: [], parcerias: [], produtos: [], perfis: [] };
   let semanaInicio = BD.inicioSemana(new Date());
   let relatorioAtual = null;
   let meuDiscordId = null;
@@ -20,11 +20,11 @@
       { id: 'ver_calculadora', nome: '🧮 Calculadora (ver e simular)' },
       { id: 'registrar_venda', nome: '📝 Registrar vendas (vendedor)' },
       { id: 'ver_ranking', nome: '🏆 Ranking' },
+      { id: 'ver_vendas', nome: '🧾 Vendas (página de vendas)' },
       { id: 'ver_painel', nome: '⚙️ Painel (entrar)' },
     ] },
     { grupo: 'Abas do painel', dica: 'Só valem com "Painel" marcado.', itens: [
       { id: 'ver_relatorio', nome: '📊 Relatório semanal' },
-      { id: 'ver_vendas', nome: '🧾 Vendas' },
       { id: 'ver_usuarios', nome: '👤 Usuários' },
       { id: 'ver_parcerias', nome: '🤝 Parcerias' },
       { id: 'ver_produtos', nome: '📦 Produtos' },
@@ -40,7 +40,7 @@
     ] },
   ];
   // Permissão que cada aba exige (a do Discord é só do DEV).
-  const ABA_PERMISSAO = { relatorio: 'ver_relatorio', vendas: 'ver_vendas', vendedores: 'ver_usuarios', parcerias: 'ver_parcerias', produtos: 'ver_produtos', gestao: 'ver_gestao' };
+  const ABA_PERMISSAO = { relatorio: 'ver_relatorio', vendedores: 'ver_usuarios', parcerias: 'ver_parcerias', produtos: 'ver_produtos', gestao: 'ver_gestao' };
 
   // ================================================================ autenticação
 
@@ -106,7 +106,6 @@
 
   const carregadores = {
     relatorio: carregarRelatorio,
-    vendas: carregarVendas,
     vendedores: carregarVendedores,
     parcerias: carregarParcerias,
     produtos: carregarProdutos,
@@ -155,10 +154,6 @@
     cache.parcerias = pa.data || [];
     cache.produtos = pr.data || [];
     cache.perfis = pf.data || [];
-    $('vendas-vendedor').innerHTML = '<option value="">Todos</option>'
-      + cache.vendedores.map((v) => `<option value="${esc(v.id)}">${esc(nomeVendedor(v))}</option>`).join('');
-    $('vendas-parceria').innerHTML = '<option value="">Todas</option><option value="sem">Pista (sem parceria)</option>'
-      + cache.parcerias.map((p) => `<option value="${esc(p.id)}">${esc(p.nome)}</option>`).join('');
   }
 
   function erroNaTabela(container, erro) {
@@ -388,124 +383,6 @@
       ['Craft', 'Quantidade'], ...(r.craft || []).map((x) => [x.nome, x.quantidade]),
     ];
     baixarCSV(`relatorio-${r.inicio}.csv`, linhas);
-  });
-
-  // ================================================================ vendas
-
-  $('vendas-de').value = BD.dataISO(BD.inicioSemana(new Date()));
-  $('vendas-ate').value = BD.dataISO(new Date());
-  ['vendas-de', 'vendas-ate', 'vendas-vendedor', 'vendas-parceria', 'vendas-canceladas']
-    .forEach((id) => $(id).addEventListener('change', carregarVendas));
-
-  // Produto do catálogo para mostrar a imagem certa (pelo id; se foi apagado, pelo nome).
-  function produtoDoItem(i) {
-    return cache.produtos.find((p) => p.id === i.produto_id)
-      || cache.produtos.find((p) => p.nome === i.produto_nome)
-      || { icone: i.icone };
-  }
-
-  async function carregarVendas() {
-    const container = $('vendas-tabela');
-    container.innerHTML = '<p class="carregando">Carregando…</p>';
-    const de = $('vendas-de').value;
-    const ate = $('vendas-ate').value;
-
-    let consulta = db.from('vendas')
-      .select('id, numero, criado_em, vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao, cancelada, cancelada_em, cancelada_motivo, cancelada_por, venda_itens(produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal)')
-      .order('criado_em', { ascending: false })
-      .limit(1000);
-    if (de) consulta = consulta.gte('criado_em', new Date(`${de}T00:00:00`).toISOString());
-    if (ate) consulta = consulta.lt('criado_em', new Date(`${BD.dataISO(BD.somarDias(`${ate}T12:00:00`, 1))}T00:00:00`).toISOString());
-    if ($('vendas-vendedor').value) consulta = consulta.eq('vendedor_id', $('vendas-vendedor').value);
-    const parceria = $('vendas-parceria').value;
-    if (parceria === 'sem') consulta = consulta.eq('com_parceria', false);
-    else if (parceria) consulta = consulta.eq('parceria_id', parceria);
-    if (!$('vendas-canceladas').checked) consulta = consulta.eq('cancelada', false);
-
-    const { data, error } = await consulta;
-    if (error) return erroNaTabela(container, error);
-    cache.vendas = data;
-
-    const validas = data.filter((v) => !v.cancelada);
-    const soma = validas.reduce((s, v) => s + Number(v.total), 0);
-    $('vendas-resumo').textContent = `${validas.length} venda${validas.length === 1 ? '' : 's'} · ${formatarValor(soma)}`;
-
-    if (!data.length) {
-      container.innerHTML = '<p class="vazio">Nenhuma venda encontrada no período.</p>';
-      return;
-    }
-    container.innerHTML = `<table>
-      <thead><tr><th>#</th><th>Data</th><th>Vendedor</th><th>Cliente</th><th>Tipo</th><th>Itens</th><th class="num">Total</th><th class="num">Comissão</th><th></th></tr></thead>
-      <tbody>${data.map((v) => `
-        <tr class="${v.cancelada ? 'cancelada' : ''}">
-          <td>${v.numero}</td>
-          <td style="white-space:nowrap">${BD.dataHoraBR(v.criado_em)}</td>
-          <td>${esc(v.vendedor_nome)}</td>
-          <td>${esc(v.cliente || (v.com_parceria ? v.parceria_nome : '') || '—')}</td>
-          <td>${v.com_parceria ? `<span class="etiqueta parceria">${esc(v.parceria_nome || 'Parceria')}</span>` : '<span class="etiqueta">Pista</span>'}</td>
-          <td><ul class="itens-venda">${v.venda_itens.map((i) => `<li>${BD.iconeProduto(produtoDoItem(i), 'chip-img')} ${esc(i.produto_nome)} x${i.quantidade}</li>`).join('')}</ul>
-            ${v.cancelada && v.cancelada_motivo ? `<div class="motivo-cancelamento">⛔ Cancelada${v.cancelada_por ? ' por ' + esc(v.cancelada_por) : ''}${v.cancelada_em ? ' em ' + esc(BD.dataHoraBR(v.cancelada_em)) : ''}: ${esc(v.cancelada_motivo)}</div>` : ''}
-            ${v.observacao ? `<div class="dica">📝 ${esc(v.observacao)}</div>` : ''}</td>
-          <td class="num"><strong>${formatarValor(v.total)}</strong></td>
-          <td class="num">${formatarValor(v.comissao)}</td>
-          <td class="acoes">${!pode('cancelar_venda') ? '' : v.cancelada
-            ? `<button type="button" class="botao botao-pequeno" data-reativar="${esc(v.id)}">Reativar</button>`
-            : `<button type="button" class="botao-perigo botao-pequeno" data-cancelar="${esc(v.id)}">Cancelar</button>`}</td>
-        </tr>`).join('')}
-      </tbody></table>`;
-  }
-
-  $('vendas-tabela').addEventListener('click', async (e) => {
-    const botao = e.target.closest('[data-cancelar], [data-reativar]');
-    if (!botao) return;
-    if (botao.dataset.cancelar) return abrirCancelarVenda(botao.dataset.cancelar);
-    botao.disabled = true;
-    const { error } = await db.rpc('reativar_venda', { p_id: botao.dataset.reativar });
-    BD.toast(error ? BD.mensagemErro(error) : 'Venda reativada.', error ? 'erro' : 'ok');
-    carregarVendas();
-  });
-
-  let vendaCancelando = null;
-  function abrirCancelarVenda(id) {
-    const v = cache.vendas.find((x) => x.id === id);
-    vendaCancelando = id;
-    $('cancelar-venda-info').textContent = v ? `Venda #${v.numero} · ${v.vendedor_nome} · ${formatarValor(v.total)}` : '';
-    $('cancelar-venda-motivo').value = '';
-    $('cancelar-venda-erro').hidden = true;
-    $('cancelar-venda-confirmar').disabled = false;
-    BD.abrirModal($('modal-cancelar-venda'), $('cancelar-venda-motivo'));
-  }
-  $('form-cancelar-venda').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const motivo = $('cancelar-venda-motivo').value.trim();
-    const erro = $('cancelar-venda-erro');
-    if (motivo.length < 3) {
-      erro.textContent = 'Informe a justificativa do cancelamento.';
-      erro.hidden = false;
-      $('cancelar-venda-motivo').focus();
-      return;
-    }
-    $('cancelar-venda-confirmar').disabled = true;
-    const { error } = await db.rpc('cancelar_venda', { p_id: vendaCancelando, p_motivo: motivo });
-    if (error) {
-      erro.textContent = BD.mensagemErro(error);
-      erro.hidden = false;
-      $('cancelar-venda-confirmar').disabled = false;
-      return;
-    }
-    BD.fecharModal($('modal-cancelar-venda'));
-    BD.toast('Venda cancelada.', 'ok');
-    carregarVendas();
-  });
-  $('cancelar-venda-voltar').addEventListener('click', () => BD.fecharModal($('modal-cancelar-venda')));
-
-  $('vendas-csv').addEventListener('click', () => {
-    const linhas = [['Número', 'Data', 'Vendedor', 'Cliente', 'Parceria', 'Produto', 'Quantidade', 'Preço unitário', 'Subtotal', 'Total da venda', 'Comissão da venda', 'Observação', 'Cancelada', 'Justificativa do cancelamento']];
-    cache.vendas.forEach((v) => v.venda_itens.forEach((i) => linhas.push([
-      v.numero, BD.dataHoraBR(v.criado_em), v.vendedor_nome, v.cliente || (v.com_parceria ? v.parceria_nome : '') || '', v.com_parceria ? v.parceria_nome : 'Pista',
-      i.produto_nome, i.quantidade, i.preco_unitario, i.subtotal, v.total, v.comissao, v.observacao || '', v.cancelada ? 'Sim' : 'Não', v.cancelada_motivo || '',
-    ])));
-    baixarCSV(`vendas-${$('vendas-de').value || 'inicio'}-a-${$('vendas-ate').value || 'hoje'}.csv`, linhas);
   });
 
   // ================================================================ modal de edição genérico
@@ -1256,7 +1133,7 @@
   // Esc fecha a janela de cima.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    const topo = ['modal-imagem', 'modal-cancelar-venda', 'modal-encerrar', 'modal-parceria', 'modal-perfil'].find((id) => !$(id).hidden);
+    const topo = ['modal-imagem', 'modal-encerrar', 'modal-parceria', 'modal-perfil'].find((id) => !$(id).hidden);
     if (topo) BD.fecharModal($(topo));
   });
 

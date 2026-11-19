@@ -5,8 +5,9 @@ Site estático (HTML/CSS/JS puro) hospedado no GitHub Pages, com banco de dados 
 Substitui a planilha "VENDAS MERCADO OCULTO" (abas SERRA, PENDRIVE, PAGAMENTO e Base Valores e Craft):
 
 - **Calculadora** (`index.html`): o vendedor entra com a conta do **Discord**, escolhe **Pista** ou **Parceria**, monta o pedido e registra a venda (com uma tela de confirmação antes de gravar). Na parceria, o **cliente é o próprio parceiro**; na pista, o cliente é opcional. Perfis "só visualizar" simulam os valores sem registrar.
+- **Vendas** (`vendas.html`): histórico de vendas com filtros, exportação CSV e cancelamento/reativação com justificativa. Fica fora do painel: abre para os perfis com a permissão **Vendas**, e só os perfis com **Cancelar / reativar vendas** veem esses botões.
 - **Ranking** (`ranking.html`): pódio e lista dos vendedores por total vendido, com a foto do Discord. Qualquer vendedor cadastrado vê; a comissão não aparece.
-- **Painel** (`admin.html`): relatório semanal (totais, ranking, **pagamento dos vendedores** com o ID para pagamento e **craft usado**), histórico de vendas (cancelamento e exportação CSV), cadastro de **usuários**, parcerias, produtos, gestão de **perfis** e configuração do Discord.
+- **Painel** (`admin.html`): relatório semanal (totais, ranking, **pagamento dos vendedores** com o ID para pagamento e **craft usado**), cadastro de **usuários**, parcerias, produtos, gestão de **perfis** e configuração do Discord.
 - **Perfis de acesso** (aba Gestão, só o líder altera): cada perfil escolhe as páginas (Calculadora, Registrar vendas, Ranking, Painel), as abas do painel e as ações (cadastrar/editar parcerias, encerrar, pagar, cancelar vendas, usuários, produtos). Cada usuário recebe um perfil no cadastro, e um perfil também pode vir de um **cargo do Discord**. Na primeira execução do `schema.sql`, os acessos antigos por cargo viram perfis e todos os cadastros recebem o perfil **Vendedor**.
 - **Novidades**: ao entrar, cada usuário vê o que mudou desde a última visita (preços, produtos e parcerias). O 🔔 no topo reabre a lista dos últimos 30 dias.
 - **Discord**: cada venda registrada gera um aviso no canal; o relatório da semana anterior sai no dia e horário escolhidos na aba Discord (padrão: segunda às 09:00, Brasília), com embeds, logo e as imagens dos produtos. O botão **🧪 Enviar relatório simulado** manda um exemplo com dados fictícios. Os pagamentos podem ir para um **webhook próprio**.
@@ -22,6 +23,8 @@ Substitui a planilha "VENDAS MERCADO OCULTO" (abas SERRA, PENDRIVE, PAGAMENTO e 
 
 ```
 index.html           Calculadora de venda
+vendas.html          Histórico de vendas (fora do painel, pela permissão Vendas)
+js/vendas.js         Lógica da página de vendas
 admin.html           Painel administrativo
 ranking.html         Ranking de vendedores (semana, semana passada, mês e geral)
 js/ranking.js        Lógica do ranking

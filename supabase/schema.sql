@@ -1536,6 +1536,25 @@ begin
 end;
 $$;
 
+-- Opções dos filtros da página Vendas (quem vê vendas pode não acessar o painel).
+create or replace function public.vendas_filtros()
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+begin
+  if not public.tem_permissao('ver_vendas') then
+    raise exception 'Seu perfil não tem acesso às vendas.';
+  end if;
+  return jsonb_build_object(
+    'vendedores', coalesce((select jsonb_agg(jsonb_build_object('id', x.id, 'nome', x.nome) order by lower(x.nome))
+                            from (select vd.id, coalesce(vd.nome_discord, vd.nome) as nome from public.vendedores vd
+                                  where vd.ativo or exists (select 1 from public.vendas v where v.vendedor_id = vd.id)) x), '[]'::jsonb),
+    'parcerias', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'nome', p.nome, 'ativo', p.ativo) order by lower(p.nome))
+                           from public.parcerias p), '[]'::jsonb));
+end;
+$$;
+
 -- Total vendido por parceria no período (coluna "Semana" da aba Parcerias).
 create or replace function public.vendas_por_parceria(p_inicio date, p_fim date)
 returns jsonb
@@ -2537,6 +2556,7 @@ grant execute on function public.atualizar_meu_discord() to authenticated;
 grant execute on function public.minhas_novidades(boolean) to authenticated;
 grant execute on function public.marcar_novidades_vistas() to authenticated;
 grant execute on function public.vendas_por_parceria(date, date) to authenticated;
+grant execute on function public.vendas_filtros() to authenticated;
 grant execute on function public.enviar_relatorio_simulado() to authenticated;
 grant execute on function public.forum_sincronizar_agora() to authenticated;
 grant execute on function public.forum_atualizar() to authenticated;

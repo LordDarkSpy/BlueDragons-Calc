@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=19">
+<link rel="stylesheet" href="css/style.css?v=20">
 </head>
 <body>
 
@@ -21,6 +21,7 @@
         <button id="botao-novidades" type="button" class="botao botao-pequeno botao-novidades" aria-label="Novidades" hidden>🔔<span class="contador"></span></button>
         <a class="botao botao-pequeno" href="ranking.html" data-link-permissao="ver_ranking" hidden>🏆 Ranking</a>
         <a class="botao botao-pequeno" href="./" data-link-permissao="ver_calculadora" hidden>🧮 Calculadora</a>
+        <a class="botao botao-pequeno" href="vendas.html" data-link-permissao="ver_vendas" hidden>🧾 Vendas</a>
         <button id="sair" type="button" class="botao botao-pequeno" hidden>Sair</button>
       </div>
   </div>
@@ -49,7 +50,6 @@
   <div id="app" hidden>
     <nav class="abas" role="tablist" aria-label="Seções do painel">
       <button type="button" role="tab" data-aba="relatorio" aria-selected="false" hidden>📊 Relatório semanal</button>
-      <button type="button" role="tab" data-aba="vendas" aria-selected="false" hidden>🧾 Vendas</button>
       <button type="button" role="tab" data-aba="vendedores" aria-selected="false" hidden>👤 Usuários</button>
       <button type="button" role="tab" data-aba="parcerias" aria-selected="false" hidden>🤝 Parcerias</button>
       <button type="button" role="tab" data-aba="produtos" aria-selected="false" hidden>📦 Produtos</button>
@@ -87,26 +87,6 @@
         <div class="cartao"><h2>📦 Produtos</h2><div id="rel-produtos" class="tabela-wrap"></div></div>
         <div class="cartao"><h2>🔧 Craft usado</h2><div id="rel-craft" class="tabela-wrap"></div></div>
       </div>
-    </section>
-
-    <!-- Vendas -->
-    <section id="aba-vendas" class="painel" role="tabpanel" hidden>
-      <div class="cartao">
-        <h2>Vendas</h2>
-        <div class="grade-form">
-          <div><label class="rotulo" for="vendas-de">De</label><input id="vendas-de" type="date"></div>
-          <div><label class="rotulo" for="vendas-ate">Até</label><input id="vendas-ate" type="date"></div>
-          <div><label class="rotulo" for="vendas-vendedor">Vendedor</label><select id="vendas-vendedor"><option value="">Todos</option></select></div>
-          <div><label class="rotulo" for="vendas-parceria">Cliente / parceria</label><select id="vendas-parceria"><option value="">Todas</option><option value="sem">Pista (sem parceria)</option></select></div>
-        </div>
-        <label class="checkbox"><input id="vendas-canceladas" type="checkbox"> Mostrar canceladas</label>
-        <div class="barra-ferramentas" style="margin-top:14px">
-          <span id="vendas-resumo" class="usuario-admin"></span>
-          <span class="espaco"></span>
-          <button id="vendas-csv" type="button" class="botao">⬇️ Exportar CSV</button>
-        </div>
-      </div>
-      <div class="cartao tabela-wrap" id="vendas-tabela"><p class="carregando">Carregando…</p></div>
     </section>
 
     <!-- Usuários -->
@@ -311,19 +291,6 @@
   </form>
 </div>
 
-<!-- Cancelar venda -->
-<div id="modal-cancelar-venda" class="modal-fundo" hidden>
-  <form id="form-cancelar-venda" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="cancelar-venda-titulo" novalidate>
-    <h2 id="cancelar-venda-titulo">Cancelar venda</h2>
-    <p class="modal-texto"><strong id="cancelar-venda-info"></strong><br>A venda deixa de contar nos relatórios, no ranking e na comissão.</p>
-    <label class="rotulo" for="cancelar-venda-motivo">Justificativa <span class="obrigatorio">*</span></label>
-    <textarea id="cancelar-venda-motivo" maxlength="300" rows="3" placeholder="Ex.: registrada em duplicidade, cliente desistiu…"></textarea>
-    <p id="cancelar-venda-erro" class="status erro" hidden></p>
-    <button id="cancelar-venda-confirmar" type="submit" class="botao-perigo botao-bloco">Cancelar venda</button>
-    <button id="cancelar-venda-voltar" type="button" class="botao-secundario botao-bloco">Voltar</button>
-  </form>
-</div>
-
 <!-- Ver imagem em tamanho grande -->
 <div id="modal-imagem" class="modal-fundo modal-imagem" hidden>
   <figure class="visualizador" role="dialog" aria-modal="true" aria-labelledby="imagem-titulo">
@@ -394,6 +361,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=7"></script>
-<script src="js/admin.js?v=15"></script>
+<script src="js/admin.js?v=16"></script>
 </body>
 </html>

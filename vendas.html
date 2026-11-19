@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Vendas — Blue Dragons</title>
+<link rel="icon" type="image/png" href="img/logo.png">
+<link rel="stylesheet" href="css/style.css?v=20">
+</head>
+<body>
+
+<header class="topo topo-video">
+  <h1 class="so-leitor">Blue Dragons — Vendas</h1>
+  <div class="banner-dragao" title="Clique para ver de novo">
+  <video class="banner-video" src="img/banner-dragao.mp4" poster="img/banner-dragao.jpg" muted playsinline preload="auto" width="1024" height="592" aria-label="Dragão azul chegando voando e pousando na escrita Blue Dragons"></video>
+  </div>
+  <div class="topo-barra">
+      <div class="topo-acoes">
+        <span id="usuario-vendas" class="usuario-admin" hidden></span>
+        <button id="botao-novidades" type="button" class="botao botao-pequeno botao-novidades" aria-label="Novidades" hidden>🔔<span class="contador"></span></button>
+        <a class="botao botao-pequeno" href="./" data-link-permissao="ver_calculadora" hidden>🧮 Calculadora</a>
+        <a class="botao botao-pequeno" href="ranking.html" data-link-permissao="ver_ranking" hidden>🏆 Ranking</a>
+        <a class="botao botao-pequeno" href="admin.html" data-link-permissao="ver_painel" hidden>⚙️ Painel</a>
+      </div>
+  </div>
+</header>
+
+<main id="principal" class="container largo">
+
+  <section id="vendas-login" class="cartao login-admin" hidden>
+    <img class="modal-logo" src="img/logo.png" alt="" width="72" height="69">
+    <h2 style="justify-content:center">🧾 Vendas</h2>
+    <p id="vendas-login-texto" class="modal-texto">Entre com a sua conta do Discord para ver as vendas.</p>
+    <p id="vendas-login-erro" class="status erro" hidden></p>
+    <button id="vendas-entrar" type="button" class="botao-discord botao-bloco">Entrar com Discord</button>
+  </section>
+
+  <div id="vendas-app" class="painel" hidden>
+    <div class="cartao">
+      <h2>🧾 Vendas</h2>
+      <div class="grade-form">
+        <div><label class="rotulo" for="vendas-de">De</label><input id="vendas-de" type="date"></div>
+        <div><label class="rotulo" for="vendas-ate">Até</label><input id="vendas-ate" type="date"></div>
+        <div><label class="rotulo" for="vendas-vendedor">Vendedor</label><select id="vendas-vendedor"><option value="">Todos</option></select></div>
+        <div><label class="rotulo" for="vendas-parceria">Cliente / parceria</label><select id="vendas-parceria"><option value="">Todas</option><option value="sem">Pista (sem parceria)</option></select></div>
+      </div>
+      <label class="checkbox"><input id="vendas-canceladas" type="checkbox"> Mostrar canceladas</label>
+      <div class="barra-ferramentas" style="margin-top:14px">
+        <span id="vendas-resumo" class="usuario-admin"></span>
+        <span class="espaco"></span>
+        <button id="vendas-csv" type="button" class="botao">⬇️ Exportar CSV</button>
+      </div>
+    </div>
+    <div class="cartao tabela-wrap" id="vendas-tabela"><p class="carregando">Carregando…</p></div>
+  </div>
+</main>
+
+<footer class="rodape">
+  <p>Blue Dragons</p>
+  <p class="creditos">Desenvolvido por Omar Telo · © 2026 Todos os direitos reservados</p>
+</footer>
+
+<!-- Cancelar venda -->
+<div id="modal-cancelar-venda" class="modal-fundo" hidden>
+  <form id="form-cancelar-venda" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="cancelar-venda-titulo" novalidate>
+    <h2 id="cancelar-venda-titulo">Cancelar venda</h2>
+    <p class="modal-texto"><strong id="cancelar-venda-info"></strong><br>A venda deixa de contar nos relatórios, no ranking e na comissão.</p>
+    <label class="rotulo" for="cancelar-venda-motivo">Justificativa <span class="obrigatorio">*</span></label>
+    <textarea id="cancelar-venda-motivo" maxlength="300" rows="3" placeholder="Ex.: registrada em duplicidade, cliente desistiu…"></textarea>
+    <p id="cancelar-venda-erro" class="status erro" hidden></p>
+    <button id="cancelar-venda-confirmar" type="submit" class="botao-perigo botao-bloco">Cancelar venda</button>
+    <button id="cancelar-venda-voltar" type="button" class="botao-secundario botao-bloco">Voltar</button>
+  </form>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="js/config.js?v=2"></script>
+<script src="js/comum.js?v=7"></script>
+<script src="js/vendas.js?v=1"></script>
+</body>
+</html>
