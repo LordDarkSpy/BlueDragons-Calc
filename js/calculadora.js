@@ -87,12 +87,15 @@
       return mostrarErroVendedor(BD.mensagemErro(erro));
     }
     BD.ajustarLinksTopo(perfil);
+    perfilLogado = perfil;
     if (perfil && perfil.cadastrado) {
       mostrarSemCalculadora(!BD.pode(perfil, "ver_calculadora"));
       definirSessao({ id: perfil.id, nome: perfil.nome, registra: BD.pode(perfil, "registrar_venda") });
       mostrarErroVendedor("");
       BD.fecharModal(els.modalVendedor);
-      BD.novidades(perfil);
+      // Sem ID para pagamento: pede para cadastrar (volta a pedir a cada entrada até preencher).
+      if (!perfil.id_pagamento) pedirIdPagamento();
+      else BD.novidades(perfil);
     } else {
       mostrarSemCalculadora(false);
       definirSessao(null);
@@ -119,6 +122,34 @@
   }
 
   $("sair-nao-cadastrado").addEventListener("click", sair);
+
+  // ---------------------------------------------------------------- ID para pagamento
+
+  let perfilLogado = null;
+  function pedirIdPagamento() {
+    $("id-pagamento-valor").value = "";
+    $("id-pagamento-erro").hidden = true;
+    $("id-pagamento-salvar").disabled = false;
+    BD.abrirModal($("modal-id-pagamento"), $("id-pagamento-valor"));
+  }
+  function fecharIdPagamento() {
+    BD.fecharModal($("modal-id-pagamento"));
+    if (perfilLogado) BD.novidades(perfilLogado); // as novidades aparecem depois
+  }
+  $("form-id-pagamento").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const valor = $("id-pagamento-valor").value.trim();
+    const erro = $("id-pagamento-erro");
+    if (!valor) { erro.textContent = "Informe o seu ID para pagamento."; erro.hidden = false; return $("id-pagamento-valor").focus(); }
+    $("id-pagamento-salvar").disabled = true;
+    const { error } = await db.rpc("salvar_meu_id_pagamento", { p_id_pagamento: valor });
+    $("id-pagamento-salvar").disabled = false;
+    if (error) { erro.textContent = BD.mensagemErro(error); erro.hidden = false; return; }
+    if (perfilLogado) perfilLogado.id_pagamento = valor;
+    BD.toast("ID para pagamento salvo.", "ok");
+    fecharIdPagamento();
+  });
+  $("id-pagamento-depois").addEventListener("click", fecharIdPagamento);
   $("sair-sem-calculadora").addEventListener("click", () => { mostrarSemCalculadora(false); sair(); });
   $("tentar-novamente").addEventListener("click", verificarLogin);
   $("copiar-discord-id").addEventListener("click", (e) => {

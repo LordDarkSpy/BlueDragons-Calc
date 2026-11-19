@@ -824,6 +824,7 @@ as $$
     'lider', public._e_lider(),
     'dev', public._e_dev(),
     'perfil', (select nome from public.perfis where id = v.perfil_id),
+    'id_pagamento', v.id_pagamento,
     'permissoes', (select coalesce(jsonb_object_agg(p, p = any (m.lista)), '{}'::jsonb)
                    from unnest(public._permissoes_validas()) p, (select public._minhas_permissoes() as lista) m)
   )
@@ -851,6 +852,23 @@ begin
       from (select * from public.novidades
             where criado_em > case when p_todas then now() - interval '30 days' else v_desde end
             order by criado_em desc, id desc limit 30) n), '[]'::jsonb));
+end;
+$$;
+
+-- O próprio usuário cadastra (ou corrige) o ID em que recebe as comissões.
+create or replace function public.salvar_meu_id_pagamento(p_id_pagamento text)
+returns text
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v public.vendedores := public._exigir_vendedor();
+  v_pag text := regexp_replace(btrim(coalesce(p_id_pagamento, '')), '\s+', ' ', 'g');
+begin
+  if v_pag = '' then raise exception 'Informe o ID para pagamento.'; end if;
+  if length(v_pag) > 40 then raise exception 'O ID para pagamento pode ter no máximo 40 caracteres.'; end if;
+  update public.vendedores set id_pagamento = v_pag where id = v.id;
+  return v_pag;
 end;
 $$;
 
@@ -2568,6 +2586,7 @@ grant execute on function public.discord_aplicar_nomes() to authenticated;
 grant execute on function public.atualizar_meu_discord() to authenticated;
 grant execute on function public.minhas_novidades(boolean) to authenticated;
 grant execute on function public.marcar_novidades_vistas() to authenticated;
+grant execute on function public.salvar_meu_id_pagamento(text) to authenticated;
 grant execute on function public.vendas_por_parceria(date, date) to authenticated;
 grant execute on function public.vendas_filtros() to authenticated;
 grant execute on function public.enviar_relatorio_simulado() to authenticated;
