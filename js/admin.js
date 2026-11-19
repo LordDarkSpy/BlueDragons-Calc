@@ -1307,7 +1307,7 @@
     $('gestao-somente-leitura').hidden = !leitura;
     $('aba-gestao').querySelectorAll('input, select, textarea').forEach((i) => { if (!i.closest('#form-notificacao')) i.disabled = leitura; });
     prepararNotificacao();
-    ['permissoes-salvar', 'perfil-novo', 'cfg-carregar-cargos'].forEach((id) => { $(id).hidden = leitura; });
+    ['permissoes-salvar', 'perfil-novo', 'cfg-carregar-cargos', 'cfg-simulado'].forEach((id) => { $(id).hidden = leitura; });
     el.querySelectorAll('[data-remover-perfil]').forEach((btn) => { btn.hidden = leitura; });
   }
 
@@ -1420,6 +1420,9 @@
         nome_organizacao: $('cfg-nome').value.trim() || 'Blue Dragons',
         moeda: $('cfg-moeda').value || 'R$ ',
         percentual_comissao: pct / 100,
+        relatorio_automatico: $('cfg-automatico').checked,
+        relatorio_dia: Number($('cfg-relatorio-dia').value),
+        relatorio_hora: $('cfg-relatorio-hora').value || '09:00',
         atualizado_em: new Date().toISOString(),
       }).eq('id', 1));
       BD.moeda = $('cfg-moeda').value || 'R$ ';
@@ -1482,7 +1485,6 @@
     }
     const categoria = $('cfg-categoria').value.trim();
     if (categoria && !/^\d{17,20}$/.test(categoria)) return BD.toast('ID da categoria inválido: deve ter de 17 a 20 números.', 'erro');
-    const hora = $('cfg-relatorio-hora').value || '09:00';
     let site = $('cfg-site-url').value.trim() || 'https://lorddarkspy.github.io/BlueDragons-Calc/';
     if (!/^https:\/\//.test(site)) return BD.toast('O endereço do site precisa começar com https://', 'erro');
     if (!site.endsWith('/')) site += '/';
@@ -1493,9 +1495,6 @@
       webhook_relatorios: relatorios || null,
       webhook_pagamentos: pagamentos || null,
       notificar_vendas: $('cfg-notificar').checked,
-      relatorio_automatico: $('cfg-automatico').checked,
-      relatorio_dia: Number($('cfg-relatorio-dia').value),
-      relatorio_hora: hora,
       site_url: site,
       discord_categoria_parceiros: categoria || null,
       atualizado_em: new Date().toISOString(),

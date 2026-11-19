@@ -154,6 +154,24 @@
         </div>
       </div>
       <div class="cartao">
+        <h2>📊 Relatório semanal automático</h2>
+        <p class="dica">Vai para o canal de relatórios configurado pelo DEV na aba Discord.</p>
+        <label class="checkbox"><input id="cfg-automatico" type="checkbox"> Enviar o relatório da semana anterior automaticamente</label>
+        <div class="grade-form">
+          <div><label class="rotulo" for="cfg-relatorio-dia">Dia do envio</label>
+            <select id="cfg-relatorio-dia">
+              <option value="1">Segunda-feira</option><option value="2">Terça-feira</option><option value="3">Quarta-feira</option>
+              <option value="4">Quinta-feira</option><option value="5">Sexta-feira</option><option value="6">Sábado</option><option value="7">Domingo</option>
+            </select></div>
+          <div><label class="rotulo" for="cfg-relatorio-hora">Horário (Brasília)</label><input id="cfg-relatorio-hora" type="time" step="300"></div>
+        </div>
+        <p class="dica">O envio sai em até 5 minutos depois do horário. O relatório é sempre da semana anterior (segunda a domingo).</p>
+        <div class="barra-ferramentas" style="margin-top:10px">
+          <button id="cfg-simulado" type="button" class="botao">🧪 Enviar relatório simulado</button>
+          <span class="dica">Manda para o canal de relatórios um exemplo com dados fictícios, para aprovar o visual.</span>
+        </div>
+      </div>
+      <div class="cartao">
         <h2>🔐 Perfis de acesso <span><button id="cfg-carregar-cargos" type="button" class="botao botao-pequeno">🔄 Carregar cargos do servidor</button> <button id="perfil-novo" type="button" class="botao-primario botao-pequeno">+ Novo perfil</button></span></h2>
         <p class="dica">Cada usuário recebe um perfil no cadastro (aba Usuários). Um perfil também pode ser dado automaticamente a quem tem um <strong>cargo do Discord</strong> ligado a ele (conferido a cada login e a cada 10 minutos). Com mais de um perfil, a pessoa soma as permissões. O líder (administrador manual) sempre pode tudo.</p>
         <p id="gestao-somente-leitura" class="aviso-visualizacao" hidden>👁️ Você está vendo a gestão. Só o líder pode alterar.</p>
@@ -184,21 +202,6 @@
           <button type="button" class="botao" data-testar="cfg-webhook-pagamentos">Testar</button>
         </div>
 
-        <h2 style="margin-top:22px">Relatório semanal automático</h2>
-        <label class="checkbox"><input id="cfg-automatico" type="checkbox"> Enviar o relatório da semana anterior automaticamente</label>
-        <div class="grade-form">
-          <div><label class="rotulo" for="cfg-relatorio-dia">Dia do envio</label>
-            <select id="cfg-relatorio-dia">
-              <option value="1">Segunda-feira</option><option value="2">Terça-feira</option><option value="3">Quarta-feira</option>
-              <option value="4">Quinta-feira</option><option value="5">Sexta-feira</option><option value="6">Sábado</option><option value="7">Domingo</option>
-            </select></div>
-          <div><label class="rotulo" for="cfg-relatorio-hora">Horário (Brasília)</label><input id="cfg-relatorio-hora" type="time" step="300"></div>
-        </div>
-        <p class="dica">O envio sai em até 5 minutos depois do horário. O relatório é sempre da semana anterior (segunda a domingo).</p>
-        <div class="barra-ferramentas" style="margin-top:10px">
-          <button id="cfg-simulado" type="button" class="botao">🧪 Enviar relatório simulado</button>
-          <span class="dica">Manda para o canal de relatórios um exemplo com dados fictícios, para aprovar o visual.</span>
-        </div>
         <label class="rotulo" for="cfg-site-url">Endereço do site <span class="opcional">(usado para as imagens dos produtos e o logo no Discord)</span></label>
         <input id="cfg-site-url" type="url" placeholder="https://lorddarkspy.github.io/BlueDragons-Calc/">
 
@@ -410,6 +413,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=8"></script>
-<script src="js/admin.js?v=23"></script>
+<script src="js/admin.js?v=24"></script>
 </body>
 </html>
