@@ -1914,8 +1914,8 @@ begin
       || public._col('TOTAL', 13) || public._col(v_qtd::text, 5, true) || public._col(public._num(v_total), 10, true)
       || public._col(public._num((r->>'comissao')::numeric), 9, true);
 
-    -- PAGAMENTO (quem tem comissão, com o ID para pagamento): 13 + 13 + 11 = 37
-    select string_agg(public._col(e->>'nome', 13) || public._col(coalesce(nullif(e->>'id_pagamento', ''), '-'), 13)
+    -- PAGAMENTO (quem tem comissão, com o ID para pagamento): 13 + 1 + 12 + 11 = 37 (espaço entre o nome e o ID)
+    select string_agg(public._col(e->>'nome', 13) || ' ' || public._col(coalesce(nullif(e->>'id_pagamento', ''), '-'), 12)
                       || public._col(case when (e->>'pendente')::numeric <= 0 then 'PAGO' else public._num((e->>'pendente')::numeric) end, 11, true),
                       E'\n' order by ord)
       into v_linhas
@@ -1923,7 +1923,7 @@ begin
       where (e->>'comissao')::numeric > 0 and ord <= 12;
     if v_linhas is not null then
       v_tab := v_tab || E'\n\n'
-        || public._col('PAGAMENTO', 13) || public._col('ID PGTO', 13) || public._col('A PAGAR', 11, true) || E'\n'
+        || public._col('PAGAMENTO', 13) || ' ' || public._col('ID PGTO', 12) || public._col('A PAGAR', 11, true) || E'\n'
         || repeat('-', 37) || E'\n' || v_linhas;
     end if;
 
