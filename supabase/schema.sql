@@ -1663,71 +1663,72 @@ begin
              || round((v_total - v_anterior) / v_anterior * 100) || '% vs. semana anterior';
   end if;
 
-  -- RESUMO
+  -- RESUMO (todas as tabelas têm no máximo 37 caracteres por linha, para não quebrar no Discord)
   v_tab := 'RESUMO' || E'\n'
-    || public._col('Total vendido', 22) || public._col(public._num(v_total), 14, true) || E'\n'
-    || public._col('Vendas', 22) || public._col(v_qtd::text, 14, true) || E'\n'
-    || public._col('Itens vendidos', 22) || public._col(public._num(v_itens), 14, true) || E'\n'
-    || public._col('Com parceria', 22) || public._col(public._num((r->>'total_com_parceria')::numeric), 14, true) || E'\n'
-    || public._col('Pista', 22) || public._col(public._num((r->>'total_sem_parceria')::numeric), 14, true) || E'\n'
-    || public._col('Comissões (' || v_pct || '%)', 22) || public._col(public._num((r->>'comissao')::numeric), 14, true);
+    || public._col('Total vendido', 23) || public._col(public._num(v_total), 14, true) || E'\n'
+    || public._col('Vendas', 23) || public._col(v_qtd::text, 14, true) || E'\n'
+    || public._col('Itens vendidos', 23) || public._col(public._num(v_itens), 14, true) || E'\n'
+    || public._col('Com parceria', 23) || public._col(public._num((r->>'total_com_parceria')::numeric), 14, true) || E'\n'
+    || public._col('Pista', 23) || public._col(public._num((r->>'total_sem_parceria')::numeric), 14, true) || E'\n'
+    || public._col('Comissões (' || v_pct || '%)', 23) || public._col(public._num((r->>'comissao')::numeric), 14, true);
 
   if jsonb_array_length(coalesce(r->'por_vendedor', '[]')) > 0 then
-    -- VENDEDORES
-    select string_agg(public._col(ord || '. ' || (e->>'nome'), 16) || public._col(e->>'quantidade', 5, true)
-                      || public._col(public._num((e->>'total')::numeric), 11, true)
-                      || public._col(public._num((e->>'comissao')::numeric), 10, true)
-                      || '  ' || case when (e->>'comissao')::numeric <= 0 then '-' when (e->>'pendente')::numeric <= 0 then 'PAGO' else 'FALTA' end,
+    -- VENDEDORES: 13 + 5 + 10 + 9 = 37
+    select string_agg(public._col(ord || '.' || (e->>'nome'), 13) || public._col(e->>'quantidade', 5, true)
+                      || public._col(public._num((e->>'total')::numeric), 10, true)
+                      || public._col(public._num((e->>'comissao')::numeric), 9, true),
                       E'\n' order by ord)
       into v_linhas
       from jsonb_array_elements(r->'por_vendedor') with ordinality t (e, ord) where ord <= 12;
     v_tab := v_tab || E'\n\n'
-      || public._col('VENDEDOR', 16) || public._col('VEND', 5, true) || public._col('TOTAL', 11, true) || public._col('COMISSÃO', 10, true) || '  SIT.' || E'\n'
-      || repeat('-', 49) || E'\n' || v_linhas || E'\n' || repeat('-', 49) || E'\n'
-      || public._col('TOTAL', 16) || public._col(v_qtd::text, 5, true) || public._col(public._num(v_total), 11, true)
-      || public._col(public._num((r->>'comissao')::numeric), 10, true);
+      || public._col('VENDEDOR', 13) || public._col('VEND', 5, true) || public._col('TOTAL', 10, true) || public._col('COMISSÃO', 9, true) || E'\n'
+      || repeat('-', 37) || E'\n' || v_linhas || E'\n' || repeat('-', 37) || E'\n'
+      || public._col('TOTAL', 13) || public._col(v_qtd::text, 5, true) || public._col(public._num(v_total), 10, true)
+      || public._col(public._num((r->>'comissao')::numeric), 9, true);
 
-    -- PAGAMENTO (quem tem comissão, com o ID para pagamento)
-    select string_agg(public._col(e->>'nome', 16) || public._col(coalesce(nullif(e->>'id_pagamento', ''), '-'), 14)
-                      || public._col(case when (e->>'pendente')::numeric <= 0 then 'pago' else public._num((e->>'pendente')::numeric) end, 12, true),
+    -- PAGAMENTO (quem tem comissão, com o ID para pagamento): 13 + 13 + 11 = 37
+    select string_agg(public._col(e->>'nome', 13) || public._col(coalesce(nullif(e->>'id_pagamento', ''), '-'), 13)
+                      || public._col(case when (e->>'pendente')::numeric <= 0 then 'PAGO' else public._num((e->>'pendente')::numeric) end, 11, true),
                       E'\n' order by ord)
       into v_linhas
       from jsonb_array_elements(r->'por_vendedor') with ordinality t (e, ord)
       where (e->>'comissao')::numeric > 0 and ord <= 12;
     if v_linhas is not null then
       v_tab := v_tab || E'\n\n'
-        || public._col('PAGAMENTO', 16) || public._col('ID PGTO', 14) || public._col('A PAGAR', 12, true) || E'\n'
-        || repeat('-', 42) || E'\n' || v_linhas;
+        || public._col('PAGAMENTO', 13) || public._col('ID PGTO', 13) || public._col('A PAGAR', 11, true) || E'\n'
+        || repeat('-', 37) || E'\n' || v_linhas;
     end if;
 
-    -- PARCERIAS
-    select string_agg(public._col(e->>'nome', 22) || public._col(e->>'quantidade', 6, true)
+    -- PARCERIAS: 20 + 5 + 12 = 37
+    select string_agg(public._col(e->>'nome', 20) || public._col(e->>'quantidade', 5, true)
                       || public._col(public._num((e->>'total')::numeric), 12, true), E'\n' order by ord)
       into v_linhas
       from jsonb_array_elements(r->'por_parceria') with ordinality t (e, ord) where ord <= 8;
     if v_linhas is not null then
       v_tab := v_tab || E'\n\n'
-        || public._col('CLIENTE / PARCERIA', 22) || public._col('VEND', 6, true) || public._col('TOTAL', 12, true) || E'\n'
-        || repeat('-', 40) || E'\n' || v_linhas;
+        || public._col('CLIENTE/PARCERIA', 20) || public._col('VEND', 5, true) || public._col('TOTAL', 12, true) || E'\n'
+        || repeat('-', 37) || E'\n' || v_linhas;
     end if;
 
-    -- PRODUTOS
-    select string_agg(public._col(e->>'nome', 22) || public._col(public._num((e->>'quantidade')::numeric), 6, true)
+    -- PRODUTOS: 20 + 5 + 12 = 37
+    select string_agg(public._col(e->>'nome', 20) || public._col(public._num((e->>'quantidade')::numeric), 5, true)
                       || public._col(public._num((e->>'total')::numeric), 12, true), E'\n' order by ord)
       into v_linhas
       from jsonb_array_elements(r->'por_produto') with ordinality t (e, ord) where ord <= 10;
     if v_linhas is not null then
       v_tab := v_tab || E'\n\n'
-        || public._col('PRODUTO', 22) || public._col('QTD', 6, true) || public._col('TOTAL', 12, true) || E'\n'
-        || repeat('-', 40) || E'\n' || v_linhas;
+        || public._col('PRODUTO', 20) || public._col('QTD', 5, true) || public._col('TOTAL', 12, true) || E'\n'
+        || repeat('-', 37) || E'\n' || v_linhas;
     end if;
 
-    -- CRAFT
-    select string_agg((e->>'nome') || ' ' || public._num((e->>'quantidade')::numeric), ' · ' order by ord)
+    -- CRAFT: 25 + 12 = 37
+    select string_agg(public._col(e->>'nome', 25) || public._col(public._num((e->>'quantidade')::numeric), 12, true), E'\n' order by ord)
       into v_linhas
       from jsonb_array_elements(coalesce(r->'craft', '[]')) with ordinality t (e, ord) where ord <= 15;
     if v_linhas is not null then
-      v_tab := v_tab || E'\n\n' || 'CRAFT: ' || v_linhas;
+      v_tab := v_tab || E'\n\n'
+        || public._col('CRAFT USADO', 25) || public._col('QTD', 12, true) || E'\n'
+        || repeat('-', 37) || E'\n' || v_linhas;
     end if;
   else
     v_tab := v_tab || E'\n\n' || 'Nenhuma venda registrada nesta semana.';
@@ -1747,7 +1748,6 @@ begin
       'title', '📊 Relatório semanal' || case when p_simulado then ' (simulação)' else '' end,
       'description', v_txt,
       'color', 2001125,
-      'thumbnail', jsonb_build_object('url', v_logo),
       'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao, 'icon_url', v_logo),
       'timestamp', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')))));
 end;
