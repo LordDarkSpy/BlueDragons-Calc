@@ -902,6 +902,8 @@ body::before {
 .perfil-banner img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .perfil-cabecalho { display: flex; align-items: center; gap: 12px; margin: 16px 0 8px; flex-wrap: wrap; }
 .perfil-cabecalho h2 { margin: 0; border: 0; padding: 0; font-size: 1.5rem; }
+.perfil-cabecalho-grande { margin-top: 4px; padding-right: 36px; }
+.perfil-cabecalho-grande h2 { font-size: 2.1rem; line-height: 1.15; }
 .perfil-encerrada {
   margin: 8px 0 12px; padding: 10px 14px; border-radius: 8px;
   background: rgba(255, 91, 110, 0.1); border: 1px solid rgba(255, 91, 110, 0.4); color: var(--vermelho); font-size: 0.9rem;
@@ -917,7 +919,7 @@ body::before {
   padding: 0; border: 1px solid var(--borda); border-radius: 10px; overflow: hidden; cursor: zoom-in;
   background: var(--cartao-item); color: var(--texto); text-align: left;
 }
-.perfil-imagem img { width: 100%; height: 150px; object-fit: cover; display: block; }
+.perfil-imagem img { width: 100%; height: 170px; object-fit: contain; background: var(--cartao-item); display: block; }
 .perfil-imagem span { display: block; padding: 6px 10px; font-size: 0.82rem; }
 .perfil-kpis { margin-bottom: 8px; }
 .perfil-kpis .kpi strong { font-size: 1.25rem; }

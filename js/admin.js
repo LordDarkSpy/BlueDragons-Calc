@@ -640,7 +640,7 @@
 
   const IMAGENS_PARCERIA = {
     img_localizacao: { arquivo: 'localizacao', titulo: 'Localização' },
-    img_banner: { arquivo: 'banner', titulo: 'Banner' },
+    img_banner: { arquivo: 'tabela', titulo: 'Tabela de preços' },
     img_cores: { arquivo: 'cores', titulo: 'Cores da organização (carro / uniforme)' },
   };
   const TIPOS_IMAGEM = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
@@ -721,7 +721,6 @@
       container.innerHTML = '<p class="vazio">Nenhuma parceria encontrada com esse filtro.</p>';
       return;
     }
-    const url = await urlsImagens(lista.map((p) => p.img_banner));
     container.innerHTML = `<table class="tabela-parcerias">
       <thead><tr><th>Parceria</th><th>Produtos</th><th>Feita por</th><th class="num">Semana</th><th>Status</th><th></th></tr></thead>
       <tbody>${lista.map((p) => {
@@ -729,7 +728,6 @@
         return `<tr class="${p.ativo ? '' : 'encerrada'}">
           <td>
             <div class="parceria-nome">
-              ${p.img_banner && url(p.img_banner) ? `<img class="parceria-miniatura" src="${esc(url(p.img_banner))}" alt="">` : '<span class="parceria-miniatura vazia" aria-hidden="true">🤝</span>'}
               <div><strong>${esc(p.nome)}</strong>${p.responsavel ? `<div class="dica">${esc(p.responsavel)}</div>` : ''}</div>
             </div>
           </td>
@@ -1054,14 +1052,14 @@
     const vendas = perfil.vendas || [];
     const historico = perfil.historico || [];
     conteudo.innerHTML = `
-      <div class="perfil-banner">${p.img_banner && url(p.img_banner) ? `<img src="${esc(url(p.img_banner))}" alt="Banner de ${esc(p.nome)}">` : ''}</div>
-      <div class="perfil-cabecalho">
+      <div class="perfil-cabecalho perfil-cabecalho-grande">
         <h2 id="perfil-nome">${esc(p.nome)}</h2>
         ${p.ativo ? '<span class="etiqueta ativo">Ativa</span>' : '<span class="etiqueta inativo">Encerrada</span>'}
       </div>
       ${p.ativo ? '' : `<div class="perfil-encerrada"><strong>Encerrada em ${esc(p.encerrada_em ? BD.dataHoraBR(p.encerrada_em) : '—')}</strong>
         ${p.encerrada_por ? ` por ${esc(p.encerrada_por)}` : ''}<p>Motivo: ${esc(p.encerrada_motivo || '—')}</p></div>`}
       <div class="perfil-acoes">
+        ${p.img_banner && url(p.img_banner) ? `<button type="button" class="botao-primario botao-pequeno" data-ampliar="${esc(url(p.img_banner))}" data-titulo="Tabela de preços">📋 Ver tabela de preços</button>` : ''}
         ${p.img_localizacao && url(p.img_localizacao) ? `<button type="button" class="botao-primario botao-pequeno" data-ampliar="${esc(url(p.img_localizacao))}" data-titulo="Localização">📍 Ver localização</button>` : ''}
         ${pode('editar_parcerias') ? `<button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">✏️ Editar</button>` : ''}
         ${pode('encerrar_parceria') ? (p.ativo
@@ -1075,7 +1073,7 @@
         <div class="largura-total"><dt>Produtos que vendem</dt><dd>${chipsProdutos(p.produtos)}</dd></div>
         ${p.observacoes ? `<div class="largura-total"><dt>Observações</dt><dd>${esc(p.observacoes)}</dd></div>` : ''}
       </dl>
-      ${imagem('img_localizacao') || imagem('img_cores') ? `<div class="perfil-imagens">${imagem('img_localizacao')}${imagem('img_cores')}</div>` : ''}
+      ${imagem('img_banner') || imagem('img_localizacao') || imagem('img_cores') ? `<div class="perfil-imagens">${imagem('img_banner')}${imagem('img_localizacao')}${imagem('img_cores')}</div>` : ''}
       <div class="kpis perfil-kpis">
         <div class="kpi"><span>Total comprado</span><strong>${formatarValor(perfil.total)}</strong></div>
         <div class="kpi"><span>Vendas</span><strong>${perfil.quantidade}</strong></div>

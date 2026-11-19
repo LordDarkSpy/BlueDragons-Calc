@@ -1357,7 +1357,7 @@ begin
   if new.produtos is distinct from old.produtos then v_mudou := v_mudou || 'produtos'::text; end if;
   if new.localizacao is distinct from old.localizacao then v_mudou := v_mudou || 'localização'::text; end if;
   if new.img_localizacao is distinct from old.img_localizacao then v_mudou := v_mudou || 'imagem da localização'::text; end if;
-  if new.img_banner is distinct from old.img_banner then v_mudou := v_mudou || 'banner'::text; end if;
+  if new.img_banner is distinct from old.img_banner then v_mudou := v_mudou || 'tabela de preços'::text; end if;
   if new.img_cores is distinct from old.img_cores then v_mudou := v_mudou || 'cores da organização'::text; end if;
   if new.feita_por_id is distinct from old.feita_por_id then v_mudou := v_mudou || ('feita por: ' || coalesce(new.feita_por_nome, '—')); end if;
   if array_length(v_mudou, 1) > 0 then
@@ -2302,13 +2302,13 @@ begin
   select * into c from public.configuracoes where id = 1;
   v_org := c.nome_organizacao;
   v_link := c.site_url;  -- mesmo link em todos os embeds: o Discord junta as imagens numa galeria
+  -- Topo: só o nome, grande. A tabela de preços aparece como imagem do post (embaixo das informações).
   v_embed := jsonb_strip_nulls(jsonb_build_object(
     'url', v_link,
     'image', case when p.img_banner is not null then jsonb_build_object('url', public._url_imagem_parceria(p.img_banner)) end,
-    'title', '🤝 ' || p.nome,
-    'description', p.observacoes,
+    'description', '# ' || p.nome || coalesce(E'
+' || p.observacoes, ''),
     'color', 3447003,
-    'thumbnail', jsonb_build_object('url', public._url_imagem('img/logo.png')),
     'fields', jsonb_build_array(
       public._campo('📦 Vende', coalesce(nullif(array_to_string(p.produtos, ' · '), ''), '—'), false),
       public._campo('📞 Responsável / contato', p.responsavel),
@@ -2316,7 +2316,7 @@ begin
       public._campo('📅 Parceira desde', to_char(p.criado_em at time zone 'America/Sao_Paulo', 'DD/MM/YYYY'))),
     'footer', jsonb_build_object('text', 'Atualizado automaticamente pela calculadora ' || v_org)));
   v_embeds := jsonb_build_array(v_embed);
-  -- Localização e cores da organização entram na galeria (até 4 imagens no total).
+  -- Tabela de preços (acima), localização e cores da organização formam a galeria do post.
   foreach v_img in array array[p.img_localizacao, p.img_cores] loop
     continue when v_img is null;
     v_embeds := v_embeds || jsonb_build_array(jsonb_build_object('url', v_link, 'image', jsonb_build_object('url', public._url_imagem_parceria(v_img))));
