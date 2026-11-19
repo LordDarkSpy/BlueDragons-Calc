@@ -1056,6 +1056,11 @@ button.item-icone.tem-dica:focus-visible .balao-dica { display: block; }
   margin: 8px 0; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem;
   background: rgba(240, 178, 50, 0.1); border: 1px solid rgba(240, 178, 50, 0.4); color: var(--texto);
 }
+#modal-confirmar .modal { text-align: center; }
+#modal-confirmar .modal h2 { justify-content: center; }
+#modal-confirmar .confirmar-dados, #modal-confirmar .resumo-lista { text-align: left; }
+#modal-confirmar.registrada .modal { border-color: var(--verde); box-shadow: 0 0 22px rgba(46, 204, 113, 0.3); }
+#modal-confirmar.registrada .resumo-total strong { color: var(--verde); }
 .confirmar-dados { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
 .confirmar-dados div { padding: 8px 10px; border-radius: 8px; background: var(--cartao-item); border: 1px solid var(--borda); }
 .confirmar-dados dt { font-size: 0.75rem; color: var(--texto-suave); }

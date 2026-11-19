@@ -24,8 +24,6 @@
     minhaSemana: $('minha-semana'),
     modalVendedor: $('modal-vendedor'),
     erroVendedor: $('modal-vendedor-erro'),
-    modalSucesso: $('modal-sucesso'),
-    sucessoTotal: $('sucesso-total'),
     sucessoDetalhe: $('sucesso-detalhe'),
     sucessoCopiar: $('sucesso-copiar'),
     sucessoOk: $('sucesso-ok'),
@@ -295,8 +293,19 @@
     $('confirmar-erro').hidden = true;
     $('confirmar-ok').disabled = false;
     $('confirmar-ok').textContent = '✅ Confirmar venda';
+    modoConfirmacao(false);
     BD.abrirModal($('modal-confirmar'), $('confirmar-ok'));
   });
+
+  // A mesma janela: antes de confirmar mostra "Confirmar venda"; depois vira "Venda registrada!" com o ✓.
+  function modoConfirmacao(registrada) {
+    $('modal-confirmar').classList.toggle('registrada', registrada);
+    $('confirmar-icone').hidden = !registrada;
+    $('confirmar-titulo').textContent = registrada ? 'Venda registrada!' : 'Confirmar venda';
+    $('confirmar-texto').textContent = registrada ? 'Venda salva e enviada para o Discord.' : 'Confira os dados antes de registrar.';
+    $('confirmar-botoes').hidden = registrada;
+    $('sucesso-botoes').hidden = !registrada;
+  }
 
   $('confirmar-voltar').addEventListener('click', () => BD.fecharModal($('modal-confirmar')));
   $('modal-confirmar').addEventListener('click', (e) => { if (e.target === $('modal-confirmar')) BD.fecharModal($('modal-confirmar')); });
@@ -325,26 +334,24 @@
       return;
     }
 
-    BD.fecharModal($('modal-confirmar'));
     totalSucesso = Number(data.total);
-    els.sucessoTotal.textContent = formatarValor(totalSucesso);
+    $('confirmar-total').textContent = formatarValor(totalSucesso);
     els.sucessoDetalhe.textContent = `Venda #${data.numero} · ${comParceria ? 'Parceria — ' + parceriaNome : 'Pista'} · sua comissão ${formatarValor(data.comissao)}`;
     els.sucessoCopiar.textContent = '📋 Copiar valor';
     limparTudo();
     atualizarMinhaSemana();
-    BD.abrirModal(els.modalSucesso, els.sucessoCopiar);
+    modoConfirmacao(true);
+    els.sucessoCopiar.focus();
   });
 
-  els.sucessoOk.addEventListener('click', () => BD.fecharModal(els.modalSucesso));
-  els.modalSucesso.addEventListener('click', (e) => { if (e.target === els.modalSucesso) BD.fecharModal(els.modalSucesso); });
+  els.sucessoOk.addEventListener('click', () => BD.fecharModal($('modal-confirmar')));
   els.sucessoCopiar.addEventListener('click', () => {
     BD.copiar(String(Math.round(totalSucesso))).then(() => { els.sucessoCopiar.textContent = '✅ Copiado!'; });
   });
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!els.modalSucesso.hidden) BD.fecharModal(els.modalSucesso);
-    else if (!$('modal-confirmar').hidden) BD.fecharModal($('modal-confirmar'));
+    if (!$('modal-confirmar').hidden) BD.fecharModal($('modal-confirmar'));
   });
 
   // ---------------------------------------------------------------- tabela de preços

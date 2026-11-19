@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calculadora de Venda — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=18">
+<link rel="stylesheet" href="css/style.css?v=19">
 </head>
 <body>
 
@@ -127,8 +127,9 @@
 
 <div id="modal-confirmar" class="modal-fundo" hidden>
   <div class="modal modal-largo cartao" role="dialog" aria-modal="true" aria-labelledby="confirmar-titulo">
+    <div id="confirmar-icone" class="sucesso-icone" aria-hidden="true" hidden>✓</div>
     <h2 id="confirmar-titulo">Confirmar venda</h2>
-    <p class="modal-texto">Confira os dados antes de registrar.</p>
+    <p id="confirmar-texto" class="modal-texto">Confira os dados antes de registrar.</p>
     <dl class="confirmar-dados">
       <div><dt>Tipo</dt><dd id="confirmar-tipo">—</dd></div>
       <div><dt>Cliente</dt><dd id="confirmar-cliente">—</dd></div>
@@ -137,27 +138,21 @@
     <div class="resumo-total"><span>Total</span><strong id="confirmar-total">R$ 0</strong></div>
     <p id="confirmar-observacao" class="dica" hidden></p>
     <p id="confirmar-erro" class="status erro" hidden></p>
-    <button id="confirmar-ok" type="button" class="botao-primario botao-bloco">✅ Confirmar venda</button>
-    <button id="confirmar-voltar" type="button" class="botao-secundario botao-bloco">Voltar e corrigir</button>
-  </div>
-</div>
-
-<div id="modal-sucesso" class="modal-fundo" hidden>
-  <div class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="sucesso-titulo">
-    <div class="sucesso-icone" aria-hidden="true">✓</div>
-    <h2 id="sucesso-titulo">Venda registrada!</h2>
-    <p id="sucesso-texto" class="modal-texto">Venda salva e enviada para o Discord.</p>
-    <p class="modal-texto">Valor total cobrado</p>
-    <p id="sucesso-total" class="sucesso-total">R$ 0</p>
-    <p id="sucesso-detalhe" class="sucesso-detalhe"></p>
-    <button id="sucesso-copiar" type="button" class="botao botao-bloco">📋 Copiar valor</button>
-    <button id="sucesso-ok" type="button" class="botao-primario botao-bloco">Nova venda</button>
+    <div id="confirmar-botoes">
+      <button id="confirmar-ok" type="button" class="botao-primario botao-bloco">✅ Confirmar venda</button>
+      <button id="confirmar-voltar" type="button" class="botao-secundario botao-bloco">Voltar e corrigir</button>
+    </div>
+    <div id="sucesso-botoes" hidden>
+      <p id="sucesso-detalhe" class="sucesso-detalhe"></p>
+      <button id="sucesso-copiar" type="button" class="botao botao-bloco">📋 Copiar valor</button>
+      <button id="sucesso-ok" type="button" class="botao-primario botao-bloco">Nova venda</button>
+    </div>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=7"></script>
-<script src="js/calculadora.js?v=7"></script>
+<script src="js/calculadora.js?v=8"></script>
 </body>
 </html>
