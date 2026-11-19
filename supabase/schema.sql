@@ -700,9 +700,9 @@ begin
   end if;
 
   -- Troca de servidor: recomeça do zero. Apaga as vendas (ranking e relatórios saem delas), os pagamentos,
-  -- os webhooks e tudo do Discord antigo. Ficam produtos, parcerias, usuários e perfis.
+  -- as notificações (🔔), os webhooks e tudo do Discord antigo. Ficam produtos, parcerias, usuários e perfis.
   if new.discord_servidor_id is distinct from old.discord_servidor_id then
-    truncate public.venda_itens, public.vendas, public.pagamentos restart identity;
+    truncate public.venda_itens, public.vendas, public.pagamentos, public.novidades restart identity;
     new.webhook_vendas := null;
     new.webhook_relatorios := null;
     new.webhook_pagamentos := null;
