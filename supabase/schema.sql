@@ -318,6 +318,19 @@ create table if not exists public.discord_posts (
   atualizado_em timestamptz not null default now(),
   primary key (parceria_id, chave)
 );
+-- Emojis dos produtos no servidor: o bot cria um por produto com imagem (bd_<nome>) e apaga quando o
+-- produto é excluído ou perde a imagem. Sem chave estrangeira: a linha precisa sobrar para apagar o emoji.
+-- Só mexe nos emojis desta tabela; emojis criados à mão no servidor nunca são alterados.
+create table if not exists public.discord_emojis (
+  produto_id uuid primary key,
+  emoji_id text not null,
+  nome text not null,
+  imagem text,
+  atualizado_em timestamptz not null default now()
+);
+alter table public.discord_emojis enable row level security;
+revoke all on public.discord_emojis from anon, authenticated;
+
 -- Estado da sincronização (última leitura dos canais, último erro…).
 create table if not exists public.discord_estado (
   chave text primary key,
@@ -723,6 +736,7 @@ begin
     delete from public.discord_posts where true;
     delete from public.discord_estado where true;
     delete from public.discord_pedidos where true;
+    delete from public.discord_emojis where true;
     update public.vendedores set cargos = '{}', nome_discord_em = null where true;
     if new.discord_categoria_parceiros is not distinct from old.discord_categoria_parceiros then
       new.discord_categoria_parceiros := null;
@@ -1075,7 +1089,6 @@ language plpgsql volatile security definer
 set search_path = public
 as $$
 declare
-  v_itens_embeds jsonb;
   c public.configuracoes;
   v public.vendas;
   v_discord text;
@@ -1091,25 +1104,12 @@ begin
   select * into v from public.vendas where id = p_venda_id;
   select discord_id into v_discord from public.vendedores where id = v.vendedor_id;
 
-  select string_agg(coalesce(icone || ' ', '') || '**' || produto_nome || '** x' || quantidade
-                    || ' — ' || public._formatar_valor(subtotal), E'\n' order by id)
+  select string_agg(coalesce('<:' || e.nome || ':' || e.emoji_id || '> ', i.icone || ' ', '')
+                    || '**' || i.quantidade || 'x ' || i.produto_nome || '** — ' || public._formatar_valor(i.subtotal), E'\n' order by i.id)
     into v_itens
-    from public.venda_itens where venda_id = v.id;
+    from public.venda_itens i left join public.discord_emojis e on e.produto_id = i.produto_id
+    where i.venda_id = v.id;
 
-  -- Um bloco por item com a imagem do produto (até 9; o resto vai junto no último).
-  select coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
-           'color', case when v.com_parceria then 3447003 else 2001125 end,
-           'author', jsonb_build_object(
-             'name', left(x.quantidade || 'x ' || x.produto_nome || ' — ' || public._formatar_valor(x.subtotal), 256),
-             'icon_url', public._url_imagem(x.imagem)),
-           'description', case when x.ord = 9 and x.total_itens > 9
-             then '+ ' || (x.total_itens - 9) || ' item(ns) — ver a venda no site' end)) order by x.ord), '[]'::jsonb)
-    into v_itens_embeds
-    from (select i.quantidade, i.produto_nome, i.subtotal, coalesce(pr.imagem, '') as imagem,
-                 row_number() over (order by i.id) as ord, count(*) over () as total_itens
-          from public.venda_itens i left join public.produtos pr on pr.id = i.produto_id
-          where i.venda_id = v.id) x
-    where x.ord <= 9;
 
   v_campos := jsonb_build_array(
     jsonb_build_object('name', '👤 Vendedor', 'value', v.vendedor_nome, 'inline', true),
@@ -1134,11 +1134,12 @@ begin
     'embeds', jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
       'title', '🧾 Venda #' || v.numero,
       'color', case when v.com_parceria then 3447003 else 2001125 end,
+      'description', left(coalesce(v_itens, '—'), 4000),
       'fields', v_campos,
       'thumbnail', jsonb_build_object('url', public._url_imagem('img/logo.png')),
       'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao, 'icon_url', public._url_imagem('img/logo.png')),
       'timestamp', to_char(v.criado_em at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-    ))) || v_itens_embeds
+    )))
   );
 
   -- Marca o vendedor (em spoiler, discreto) se ele tiver ID do Discord.
@@ -2430,6 +2431,144 @@ end;
 $$;
 reset check_function_bodies;
 
+-- Nome do emoji de um produto: bd_ + nome sem acento (só letras, números e _; até 32 caracteres).
+create or replace function public._emoji_nome(p_nome text)
+returns text
+language sql stable
+as $$
+  select 'bd_' || coalesce(nullif(left(regexp_replace(replace(public._chave_produto(p_nome), '-', '_'), '[^a-z0-9_]', '', 'g'), 29), ''), 'produto');
+$$;
+
+-- Baixa a imagem do produto e devolve no formato que o Discord pede (data:image/png;base64,…).
+set check_function_bodies = off;
+create or replace function public._emoji_imagem(p_url text)
+returns text
+language plpgsql volatile security definer
+set search_path = public, extensions
+as $$
+declare
+  r extensions.http_response;
+  b bytea;
+  v_tipo text;
+begin
+  perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '5000');
+  r := extensions.http_get(p_url);
+  v_tipo := split_part(coalesce(r.content_type, ''), ';', 1);
+  if r.status <> 200 or v_tipo not in ('image/png', 'image/jpeg', 'image/gif', 'image/webp') then
+    raise exception 'imagem % não abriu (HTTP %, %)', p_url, r.status, coalesce(nullif(v_tipo, ''), 'sem tipo');
+  end if;
+  b := extensions.text_to_bytea(r.content);
+  if length(b) > 256000 then raise exception 'imagem % passa de 256 KB (limite do Discord para emojis)', p_url; end if;
+  return 'data:' || v_tipo || ';base64,' || replace(encode(b, 'base64'), E'\n', '');
+end;
+$$;
+reset check_function_bodies;
+
+-- Cria, renomeia e apaga os emojis dos produtos (agendado a cada minuto e logo depois de salvar um produto).
+create or replace function public._emojis_sincronizar(p_limite int default 5, p_forcar boolean default false)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_srv text := (select discord_servidor_id from public.configuracoes where id = 1);
+  r record;
+  s int;
+  b jsonb;
+  v_img text;
+  v_feitos int := 0;
+begin
+  if public._token_bot() is null or v_srv is null
+     or not exists (select 1 from pg_extension where extname = 'http') then
+    return jsonb_build_object('ativo', false);
+  end if;
+  if not pg_try_advisory_xact_lock(hashtext('bluedragons-emojis')) then
+    return jsonb_build_object('ativo', true, 'ocupado', true);
+  end if;
+  if not p_forcar and exists (select 1 from public.discord_estado where chave = 'erro_emoji' and em > now() - interval '5 minutes') then
+    return jsonb_build_object('ativo', true, 'erro', (select valor from public.discord_estado where chave = 'erro_emoji'));
+  end if;
+
+  -- 1. Apaga os emojis de produtos excluídos, sem imagem ou com imagem trocada (a imagem nova vira outro emoji).
+  for r in
+    select e.* from public.discord_emojis e left join public.produtos p on p.id = e.produto_id
+    where p.id is null or coalesce(p.imagem, '') = '' or e.imagem is distinct from p.imagem
+  loop
+    exit when v_feitos >= p_limite;
+    select x.status, x.corpo into s, b from public._discord_api('DELETE', '/guilds/' || v_srv || '/emojis/' || r.emoji_id) x;
+    v_feitos := v_feitos + 1;
+    if s not in (200, 204, 404) then
+      insert into public.discord_estado (chave, valor, em) values ('erro_emoji', 'Emoji ' || r.nome || ': ' || public._discord_msg_erro(s, b), now())
+      on conflict (chave) do update set valor = excluded.valor, em = now();
+      return jsonb_build_object('ativo', true, 'erro', (select valor from public.discord_estado where chave = 'erro_emoji'));
+    end if;
+    delete from public.discord_emojis where produto_id = r.produto_id;
+  end loop;
+
+  -- 2. Produto renomeado: renomeia o emoji.
+  for r in
+    select e.*, public._emoji_nome(p.nome) as novo from public.discord_emojis e join public.produtos p on p.id = e.produto_id
+    where e.nome <> public._emoji_nome(p.nome)
+  loop
+    exit when v_feitos >= p_limite;
+    select x.status, x.corpo into s, b from public._discord_api('PATCH', '/guilds/' || v_srv || '/emojis/' || r.emoji_id,
+      jsonb_build_object('name', r.novo)) x;
+    v_feitos := v_feitos + 1;
+    if s = 404 then
+      delete from public.discord_emojis where produto_id = r.produto_id; -- apagado à mão: cria de novo abaixo
+    elsif s = 200 then
+      update public.discord_emojis set nome = r.novo, atualizado_em = now() where produto_id = r.produto_id;
+    end if;
+  end loop;
+
+  -- 3. Produtos com imagem e sem emoji: cria.
+  for r in
+    select p.id, p.nome, p.imagem from public.produtos p
+    where coalesce(p.imagem, '') <> '' and not exists (select 1 from public.discord_emojis e where e.produto_id = p.id)
+    order by p.ordem, p.nome
+  loop
+    exit when v_feitos >= p_limite;
+    begin
+      v_img := public._emoji_imagem(public._url_imagem(r.imagem));
+    exception when others then
+      insert into public.discord_estado (chave, valor, em) values ('erro_emoji', 'Emoji de ' || r.nome || ': ' || sqlerrm, now())
+      on conflict (chave) do update set valor = excluded.valor, em = now();
+      return jsonb_build_object('ativo', true, 'erro', (select valor from public.discord_estado where chave = 'erro_emoji'));
+    end;
+    select x.status, x.corpo into s, b from public._discord_api('POST', '/guilds/' || v_srv || '/emojis',
+      jsonb_build_object('name', public._emoji_nome(r.nome), 'image', v_img)) x;
+    v_feitos := v_feitos + 1;
+    if s not in (200, 201) then
+      insert into public.discord_estado (chave, valor, em) values ('erro_emoji',
+        'Emoji de ' || r.nome || ': ' || case when (b->>'code') = '30008' then 'o servidor não tem mais vagas de emoji (limite do Discord).'
+                                              else public._discord_msg_erro(s, b) end, now())
+      on conflict (chave) do update set valor = excluded.valor, em = now();
+      return jsonb_build_object('ativo', true, 'erro', (select valor from public.discord_estado where chave = 'erro_emoji'));
+    end if;
+    insert into public.discord_emojis (produto_id, emoji_id, nome, imagem)
+    values (r.id, b->>'id', b->>'name', r.imagem)
+    on conflict (produto_id) do update set emoji_id = excluded.emoji_id, nome = excluded.nome, imagem = excluded.imagem, atualizado_em = now();
+  end loop;
+
+  delete from public.discord_estado where chave = 'erro_emoji';
+  return jsonb_build_object('ativo', true, 'emojis', (select count(*) from public.discord_emojis));
+end;
+$$;
+
+-- Logo depois de salvar ou excluir um produto no painel (sem esperar o agendamento).
+create or replace function public.emojis_atualizar()
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if not public.tem_permissao('gerenciar_produtos') then raise exception 'Acesso negado.'; end if;
+  return public._emojis_sincronizar(5, false);
+exception when others then
+  return jsonb_build_object('erro', sqlerrm);
+end;
+$$;
+
 -- Parcerias ativas × produtos que vendem (o que deve existir no fórum).
 create or replace function public._forum_desejado()
 returns table (parceria_id uuid, chave text, produto text)
@@ -2490,13 +2629,12 @@ begin
 end;
 $$;
 
-create or replace function public._forum_erro(p_status int, p_corpo jsonb)
-returns jsonb
-language plpgsql volatile security definer
-set search_path = public
-as $$
-declare
-  v_msg text := case
+-- Mensagem amigável para um erro da API do Discord.
+create or replace function public._discord_msg_erro(p_status int, p_corpo jsonb)
+returns text
+language sql immutable
+as $f$
+  select case
     when p_status = 401 then 'Token do bot inválido. Salve um token novo.'
     when p_status = 403 or (p_corpo->>'code') in ('50001', '50013') then
       'O bot não tem permissão no servidor. Ele precisa ser Administrador: abra o link de convite da aba Discord e autorize de novo.'
@@ -2504,6 +2642,15 @@ declare
     when p_status = 0 then coalesce(p_corpo->>'message', 'Erro.')
     else 'Erro do Discord: ' || coalesce(p_status::text, '') || ' ' || coalesce(left(p_corpo->>'message', 150), '')
   end;
+$f$;
+
+create or replace function public._forum_erro(p_status int, p_corpo jsonb)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_msg text := public._discord_msg_erro(p_status, p_corpo);
 begin
   insert into public.discord_estado (chave, valor, em) values ('erro', v_msg, now())
   on conflict (chave) do update set valor = excluded.valor, em = excluded.em;
@@ -2664,7 +2811,11 @@ as $$
     'foruns', coalesce((select jsonb_agg(jsonb_build_object('nome', f.nome, 'posts', (select count(*) from public.discord_posts p where p.chave = f.chave)) order by f.nome)
                         from public.discord_foruns f where f.canal_id is not null), '[]'::jsonb),
     'faltam', (select count(*) from public._forum_desejado() d
-               where not exists (select 1 from public.discord_posts p where p.parceria_id = d.parceria_id and p.chave = d.chave)));
+               where not exists (select 1 from public.discord_posts p where p.parceria_id = d.parceria_id and p.chave = d.chave)),
+    'emojis', (select count(*) from public.discord_emojis),
+    'emojis_faltam', (select count(*) from public.produtos p where coalesce(p.imagem, '') <> ''
+                      and not exists (select 1 from public.discord_emojis e where e.produto_id = p.id)),
+    'erro_emoji', (select valor from public.discord_estado where chave = 'erro_emoji'));
 $$;
 
 -- Botão "Sincronizar agora" (DEV) e atualização logo após salvar uma parceria.
@@ -2675,6 +2826,7 @@ set search_path = public
 as $$
 begin
   if not public._e_dev() then raise exception 'Só o DEV pode configurar o Discord.'; end if;
+  perform public._emojis_sincronizar(10, true);
   return public._forum_sincronizar(10, true);
 end;
 $$;
@@ -2736,6 +2888,7 @@ grant execute on function public.atualizar_meu_discord() to authenticated;
 grant execute on function public.minhas_novidades(boolean) to authenticated;
 grant execute on function public.marcar_novidades_vistas() to authenticated;
 grant execute on function public.novidades_pendentes() to authenticated;
+grant execute on function public.emojis_atualizar() to authenticated;
 grant execute on function public.decidir_novidades(bigint[], boolean, text) to authenticated;
 grant execute on function public.enviar_notificacao(text, text, text, text) to authenticated;
 revoke execute on function public._novidade(text, text, text) from public, anon, authenticated;
@@ -2762,6 +2915,8 @@ select cron.schedule('bluedragons-nomes-discord', '*/10 * * * *', 'select public
 -- Fórum de parceiros: confere e atualiza a cada minuto (sem categoria configurada, não faz nada).
 select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-forum-parceiros';
 select cron.schedule('bluedragons-forum-parceiros', '* * * * *', 'select public._forum_sincronizar()');
+select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-emojis-produtos';
+select cron.schedule('bluedragons-emojis-produtos', '* * * * *', 'select public._emojis_sincronizar()');
 
 -- Novidades com mais de 90 dias saem da lista.
 select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-limpar-novidades';

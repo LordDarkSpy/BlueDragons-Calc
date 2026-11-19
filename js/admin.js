@@ -785,6 +785,11 @@
   $('notificar-nao').addEventListener('click', () => decidirNotificacao(false));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal-notificar').hidden && !$('notificar-nao').disabled) decidirNotificacao(false); });
 
+  // Emojis dos produtos no Discord: atualiza logo depois de mudar um produto (sem travar a tela).
+  function atualizarEmojis() {
+    db.rpc('emojis_atualizar').then(() => {}, () => {});
+  }
+
   // Fórum de parceiros no Discord: atualiza logo depois de mudar uma parceria (sem travar a tela).
   function atualizarForum() {
     db.rpc('forum_atualizar').then(() => {}, () => {});
@@ -1234,6 +1239,7 @@
       };
       falhou(novo ? await db.from('produtos').insert(dados) : await db.from('produtos').update(dados).eq('id', p.id));
       carregarProdutos();
+      atualizarEmojis();
       setTimeout(perguntarNotificacao, 0); // depois que o formulário fecha
     });
   }
@@ -1248,7 +1254,7 @@
     const { error } = await db.from('produtos').delete().eq('id', p.id);
     BD.toast(error ? BD.mensagemErro(error) : 'Produto excluído.', error ? 'erro' : 'ok');
     carregarProdutos();
-    if (!error) perguntarNotificacao();
+    if (!error) { atualizarEmojis(); perguntarNotificacao(); }
   });
 
   document.querySelectorAll('[data-novo]').forEach((b) => b.addEventListener('click', () => {
@@ -1568,6 +1574,10 @@
         + (s.faltam ? ` · ${s.faltam} para publicar` : '')
         + (s.ok_em ? ` · última sincronização ${BD.dataHoraBR(s.ok_em)}` : '');
     lista.innerHTML = foruns.map((x) => `<span class="chip"># ${esc(x.nome)} <strong>${esc(String(x.posts))}</strong></span>`).join('');
+    if (s.emojis !== undefined) {
+      el.textContent += ` · 😀 ${s.emojis} emoji(s) de produto` + (s.emojis_faltam ? ` (${s.emojis_faltam} para criar)` : '');
+      if (s.erro_emoji) el.textContent += ` · ⚠️ ${s.erro_emoji}`;
+    }
   }
 
   async function atualizarStatusForum() {

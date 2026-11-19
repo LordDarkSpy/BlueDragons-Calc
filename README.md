@@ -15,6 +15,7 @@ Substitui a planilha "VENDAS MERCADO OCULTO" (abas SERRA, PENDRIVE, PAGAMENTO e 
   - Na aba Gestão, quem tem a permissão **📢 Enviar notificações** manda uma mensagem para todos, para quem tem um cargo do Discord ou para um usuário.
 - **Discord**: cada venda registrada gera um aviso no canal; o relatório da semana anterior sai no dia e horário escolhidos na aba Discord (padrão: segunda às 09:00, Brasília), com embeds, logo e as imagens dos produtos. O botão **🧪 Enviar relatório simulado** manda um exemplo com dados fictícios. Os pagamentos podem ir para um **webhook próprio**.
 - **Fórum de parceiros**: com o ID de uma categoria configurado, o bot cria um fórum por produto vendido pelas parcerias (arma, munição…) e mantém um post por parceria, atualizado quando ela muda e apagado quando é encerrada.
+- **Emojis dos produtos**: o bot cria no servidor um emoji para cada produto com imagem (`bd_<nome>`), usado nos itens do aviso de venda. Renomeia quando o produto muda de nome, recria quando a imagem muda e apaga quando o produto é excluído ou fica sem imagem. Emojis criados à mão no servidor nunca são alterados. Emojis do servidor são gratuitos (50 vagas sem impulso).
 
 ### Regras herdadas da planilha
 
