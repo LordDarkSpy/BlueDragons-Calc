@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Ranking — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=17">
+<link rel="stylesheet" href="css/style.css?v=18">
 </head>
 <body>
 
@@ -17,7 +17,9 @@
   </div>
   <div class="topo-barra">
       <div class="topo-acoes">
-        <a class="botao botao-pequeno" href="./">🧮 Calculadora</a>
+        <button id="botao-novidades" type="button" class="botao botao-pequeno botao-novidades" aria-label="Novidades" hidden>🔔<span class="contador"></span></button>
+        <a class="botao botao-pequeno" href="./" data-link-permissao="ver_calculadora" hidden>🧮 Calculadora</a>
+        <a class="botao botao-pequeno" href="admin.html" data-link-permissao="ver_painel" hidden>⚙️ Painel</a>
       </div>
   </div>
 </header>
@@ -59,7 +61,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=6"></script>
-<script src="js/ranking.js?v=1"></script>
+<script src="js/comum.js?v=7"></script>
+<script src="js/ranking.js?v=2"></script>
 </body>
 </html>

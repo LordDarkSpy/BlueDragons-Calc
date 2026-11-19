@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=17">
+<link rel="stylesheet" href="css/style.css?v=18">
 </head>
 <body>
 
@@ -18,8 +18,9 @@
   <div class="topo-barra">
       <div class="topo-acoes">
         <span id="usuario-admin" class="usuario-admin" hidden></span>
-        <a class="botao botao-pequeno" href="ranking.html">🏆 Ranking</a>
-        <a class="botao botao-pequeno" href="./">🧮 Calculadora</a>
+        <button id="botao-novidades" type="button" class="botao botao-pequeno botao-novidades" aria-label="Novidades" hidden>🔔<span class="contador"></span></button>
+        <a class="botao botao-pequeno" href="ranking.html" data-link-permissao="ver_ranking" hidden>🏆 Ranking</a>
+        <a class="botao botao-pequeno" href="./" data-link-permissao="ver_calculadora" hidden>🧮 Calculadora</a>
         <button id="sair" type="button" class="botao botao-pequeno" hidden>Sair</button>
       </div>
   </div>
@@ -38,7 +39,7 @@
 
   <section id="sem-permissao" class="cartao login-admin" hidden>
     <h2 style="justify-content:center">Sem permissão</h2>
-    <p class="modal-texto">Sua conta do Discord não é administradora. Peça a um administrador para marcar a opção <strong>Administrador</strong> no seu cadastro.</p>
+    <p class="modal-texto">O seu perfil não tem acesso ao painel. Peça à liderança para ajustar o seu perfil (aba Gestão → Perfis).</p>
     <label class="rotulo" for="sem-permissao-id">Seu ID do Discord</label>
     <input id="sem-permissao-id" type="text" readonly>
     <button id="sair-sem-permissao" type="button" class="botao botao-bloco">Entrar com outra conta</button>
@@ -47,17 +48,19 @@
   <!-- Painel -->
   <div id="app" hidden>
     <nav class="abas" role="tablist" aria-label="Seções do painel">
-      <button type="button" role="tab" data-aba="relatorio" aria-selected="true">📊 Relatório semanal</button>
-      <button type="button" role="tab" data-aba="vendas" aria-selected="false">🧾 Vendas</button>
-      <button type="button" role="tab" data-aba="vendedores" aria-selected="false">👤 Vendedores</button>
-      <button type="button" role="tab" data-aba="parcerias" aria-selected="false">🤝 Parcerias</button>
-      <button type="button" role="tab" data-aba="produtos" aria-selected="false">📦 Produtos</button>
+      <button type="button" role="tab" data-aba="relatorio" aria-selected="false" hidden>📊 Relatório semanal</button>
+      <button type="button" role="tab" data-aba="vendas" aria-selected="false" hidden>🧾 Vendas</button>
+      <button type="button" role="tab" data-aba="vendedores" aria-selected="false" hidden>👤 Usuários</button>
+      <button type="button" role="tab" data-aba="parcerias" aria-selected="false" hidden>🤝 Parcerias</button>
+      <button type="button" role="tab" data-aba="produtos" aria-selected="false" hidden>📦 Produtos</button>
       <button type="button" role="tab" data-aba="config" aria-selected="false" hidden>🔔 Discord</button>
       <button type="button" role="tab" data-aba="gestao" aria-selected="false" hidden>🛡️ Gestão</button>
     </nav>
 
+    <p id="sem-abas" class="cartao vazio" hidden>O seu perfil acessa o painel, mas nenhuma aba foi liberada. Peça à liderança para ajustar o perfil.</p>
+
     <!-- Relatório semanal -->
-    <section id="aba-relatorio" class="painel" role="tabpanel">
+    <section id="aba-relatorio" class="painel" role="tabpanel" hidden>
       <div class="cartao barra-ferramentas">
         <div class="navegador-semana">
           <button id="semana-anterior" type="button" class="botao botao-pequeno" aria-label="Semana anterior">◀</button>
@@ -94,7 +97,7 @@
           <div><label class="rotulo" for="vendas-de">De</label><input id="vendas-de" type="date"></div>
           <div><label class="rotulo" for="vendas-ate">Até</label><input id="vendas-ate" type="date"></div>
           <div><label class="rotulo" for="vendas-vendedor">Vendedor</label><select id="vendas-vendedor"><option value="">Todos</option></select></div>
-          <div><label class="rotulo" for="vendas-parceria">Parceria</label><select id="vendas-parceria"><option value="">Todas</option><option value="sem">Pista (sem parceria)</option></select></div>
+          <div><label class="rotulo" for="vendas-parceria">Cliente / parceria</label><select id="vendas-parceria"><option value="">Todas</option><option value="sem">Pista (sem parceria)</option></select></div>
         </div>
         <label class="checkbox"><input id="vendas-canceladas" type="checkbox"> Mostrar canceladas</label>
         <div class="barra-ferramentas" style="margin-top:14px">
@@ -106,10 +109,11 @@
       <div class="cartao tabela-wrap" id="vendas-tabela"><p class="carregando">Carregando…</p></div>
     </section>
 
-    <!-- Vendedores -->
+    <!-- Usuários -->
     <section id="aba-vendedores" class="painel" role="tabpanel" hidden>
       <div class="cartao">
-        <h2>Vendedores <span><button id="sincronizar-nomes" type="button" class="botao botao-pequeno">🔄 Atualizar nomes do Discord</button> <button type="button" class="botao-primario botao-pequeno" data-novo="vendedor">+ Novo vendedor</button></span></h2>
+        <h2>Usuários <span><button id="sincronizar-nomes" type="button" class="botao botao-pequeno">🔄 Atualizar nomes do Discord</button> <button type="button" class="botao-primario botao-pequeno" data-novo="vendedor">+ Novo usuário</button></span></h2>
+        <p class="dica">Cada usuário tem um <strong>perfil</strong> (Vendedor, Só calculadora…) que define o que ele vê e faz. Os perfis são criados pelo líder na aba Gestão.</p>
         <div id="vendedores-tabela" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
       </div>
     </section>
@@ -117,12 +121,20 @@
     <!-- Parcerias -->
     <section id="aba-parcerias" class="painel" role="tabpanel" hidden>
       <div class="cartao">
-        <h2>Parcerias <button type="button" class="botao-primario botao-pequeno" data-novo="parceria">+ Nova parceria</button></h2>
-        <div class="grade-form filtros-parcerias">
-          <div><label class="rotulo" for="parcerias-busca">Pesquisar</label><input id="parcerias-busca" type="search" placeholder="Nome, responsável ou produto…" autocomplete="off"></div>
+        <h2>Parcerias <button type="button" class="botao-primario botao-pequeno" data-novo="parceria" hidden>+ Nova parceria</button></h2>
+        <div class="filtros-parcerias">
+          <div class="campo-busca">
+            <label class="rotulo" for="parcerias-busca">Pesquisar</label>
+            <div class="busca-caixa">
+              <span class="busca-lupa" aria-hidden="true">🔍</span>
+              <input id="parcerias-busca" type="search" placeholder="Nome, responsável, quem fez ou produto…" autocomplete="off">
+              <button id="parcerias-limpar" type="button" class="busca-limpar" aria-label="Limpar pesquisa" hidden>✕</button>
+            </div>
+          </div>
           <div><label class="rotulo" for="parcerias-produto">Produto da organização</label><select id="parcerias-produto"><option value="">Todos os produtos</option></select></div>
           <div><label class="rotulo" for="parcerias-status">Status</label><select id="parcerias-status"><option value="">Todas</option><option value="ativa">Ativas</option><option value="encerrada">Encerradas</option></select></div>
         </div>
+        <p id="parcerias-contagem" class="dica parcerias-contagem"></p>
         <div id="parcerias-tabela" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
       </div>
     </section>
@@ -146,15 +158,10 @@
         </div>
       </div>
       <div class="cartao">
-        <h2>🛡️ Acesso ao painel por cargo</h2>
-        <p class="dica">Quem tiver um dos cargos marcados (e estiver cadastrado e ativo em Vendedores) entra neste painel. Os cargos são conferidos a cada login e a cada 10 minutos.</p>
-        <div id="cfg-cargos" class="lista-cargos"><p class="carregando">Carregando…</p></div>
-        <button id="cfg-carregar-cargos" type="button" class="botao botao-pequeno">🔄 Carregar cargos do servidor</button>
-      </div>
-      <div class="cartao">
-        <h2>🔐 Permissões das ações de impacto</h2>
-        <p class="dica">Escolha quais cargos podem fazer cada ação. O líder (administrador manual) sempre pode tudo e é quem altera esta aba. Quem não tiver a permissão nem vê o botão.</p>
-        <div id="permissoes-lista"><p class="carregando">Carregando…</p></div>
+        <h2>🔐 Perfis de acesso <span><button id="cfg-carregar-cargos" type="button" class="botao botao-pequeno">🔄 Carregar cargos do servidor</button> <button id="perfil-novo" type="button" class="botao-primario botao-pequeno">+ Novo perfil</button></span></h2>
+        <p class="dica">Cada usuário recebe um perfil no cadastro (aba Usuários). Um perfil também pode ser dado automaticamente a quem tem um <strong>cargo do Discord</strong> ligado a ele (conferido a cada login e a cada 10 minutos). Com mais de um perfil, a pessoa soma as permissões. O líder (administrador manual) sempre pode tudo.</p>
+        <p id="gestao-somente-leitura" class="aviso-visualizacao" hidden>👁️ Você está vendo a gestão. Só o líder pode alterar.</p>
+        <div id="perfis-lista"><p class="carregando">Carregando…</p></div>
       </div>
       <button id="permissoes-salvar" type="button" class="botao-primario">💾 Salvar gestão</button>
     </section>
@@ -175,18 +182,60 @@
           <input id="cfg-webhook-relatorios" type="url" placeholder="https://discord.com/api/webhooks/…" style="flex:1;min-width:220px">
           <button type="button" class="botao" data-testar="cfg-webhook-relatorios">Testar</button>
         </div>
-        <label class="checkbox"><input id="cfg-automatico" type="checkbox"> Enviar o relatório da semana anterior toda segunda-feira às 09:00</label>
+        <label class="rotulo" for="cfg-webhook-pagamentos">Webhook de pagamento semanal <span class="opcional">(aviso de cada comissão paga; se vazio, usa o de relatórios)</span></label>
+        <div class="barra-ferramentas">
+          <input id="cfg-webhook-pagamentos" type="url" placeholder="https://discord.com/api/webhooks/…" style="flex:1;min-width:220px">
+          <button type="button" class="botao" data-testar="cfg-webhook-pagamentos">Testar</button>
+        </div>
+
+        <h2 style="margin-top:22px">Relatório semanal automático</h2>
+        <label class="checkbox"><input id="cfg-automatico" type="checkbox"> Enviar o relatório da semana anterior automaticamente</label>
+        <div class="grade-form">
+          <div><label class="rotulo" for="cfg-relatorio-dia">Dia do envio</label>
+            <select id="cfg-relatorio-dia">
+              <option value="1">Segunda-feira</option><option value="2">Terça-feira</option><option value="3">Quarta-feira</option>
+              <option value="4">Quinta-feira</option><option value="5">Sexta-feira</option><option value="6">Sábado</option><option value="7">Domingo</option>
+            </select></div>
+          <div><label class="rotulo" for="cfg-relatorio-hora">Horário (Brasília)</label><input id="cfg-relatorio-hora" type="time" step="300"></div>
+        </div>
+        <p class="dica">O envio sai em até 5 minutos depois do horário. O relatório é sempre da semana anterior (segunda a domingo).</p>
+        <div class="barra-ferramentas" style="margin-top:10px">
+          <button id="cfg-simulado" type="button" class="botao">🧪 Enviar relatório simulado</button>
+          <span class="dica">Manda para o canal de relatórios um exemplo com dados fictícios, para aprovar o visual.</span>
+        </div>
+        <label class="rotulo" for="cfg-site-url">Endereço do site <span class="opcional">(usado para as imagens dos produtos e o logo no Discord)</span></label>
+        <input id="cfg-site-url" type="url" placeholder="https://lorddarkspy.github.io/BlueDragons-Calc/">
 
         <h2 style="margin-top:22px">Nomes do servidor</h2>
         <p class="dica">O site mostra o nome que cada vendedor usa no servidor do Discord. Os nomes são atualizados sozinhos a cada 10 minutos por um bot (não precisa hospedar nada).</p>
         <label class="rotulo" for="cfg-servidor">ID do servidor do Discord</label>
-        <input id="cfg-servidor" type="text" inputmode="numeric" maxlength="20" placeholder="Botão direito no ícone do servidor → Copiar ID do servidor">
+        <div class="barra-ferramentas">
+          <input id="cfg-servidor" type="text" readonly style="flex:1;min-width:220px" placeholder="Nenhum servidor configurado">
+          <button id="cfg-trocar-servidor" type="button" class="botao">🔁 Trocar de servidor</button>
+        </div>
         <label class="rotulo" for="cfg-token">Token do bot</label>
         <div class="barra-ferramentas">
           <input id="cfg-token" type="password" autocomplete="off" placeholder="Developer Portal → Bot → Reset Token" style="flex:1;min-width:220px">
           <button id="cfg-salvar-token" type="button" class="botao">Salvar token</button>
         </div>
         <p id="cfg-bot-status" class="dica"></p>
+        <div id="cfg-convite" class="convite-bot" hidden>
+          <span class="dica">Link para adicionar o bot ao servidor (já com as permissões do fórum de parceiros):</span>
+          <div class="barra-ferramentas">
+            <a id="cfg-convite-link" class="botao-discord botao-pequeno" href="#" target="_blank" rel="noopener">➕ Adicionar o bot ao servidor</a>
+            <button id="cfg-convite-copiar" type="button" class="botao botao-pequeno">📋 Copiar convite</button>
+          </div>
+        </div>
+
+        <h2 style="margin-top:22px">Fórum de parceiros</h2>
+        <p class="dica">Dentro da categoria escolhida, o bot cria um <strong>fórum para cada produto</strong> que as parcerias vendem (ex.: arma, munição) e mantém <strong>um post por parceria</strong>. O post é atualizado quando a parceria muda e sai quando ela é encerrada. Para pegar o ID: botão direito na categoria → Copiar ID do canal.</p>
+        <label class="rotulo" for="cfg-categoria">ID da categoria de parceiros <span class="opcional">(vazio = desligado)</span></label>
+        <input id="cfg-categoria" type="text" inputmode="numeric" maxlength="20" placeholder="Ex.: 1234567890123456789">
+        <div class="barra-ferramentas" style="margin-top:10px">
+          <button id="cfg-forum-sincronizar" type="button" class="botao">🔄 Sincronizar agora</button>
+          <span id="cfg-forum-status" class="dica"></span>
+        </div>
+        <div id="cfg-forum-lista" class="chips" style="margin-top:8px"></div>
 
         <button id="cfg-salvar" type="submit" class="botao-primario botao-bloco">💾 Salvar configurações</button>
       </form>
@@ -225,8 +274,6 @@
         <span class="rotulo">Produtos que a organização vende <span class="opcional">(digite; se já existir em outra parceria, é só selecionar)</span></span>
         <div id="parceria-produtos" class="editor-produtos"></div>
       </div>
-      <div class="largura-total"><label class="rotulo" for="parceria-localizacao">Localização <span class="opcional">(descrição)</span></label>
-        <input id="parceria-localizacao" type="text" maxlength="200" autocomplete="off" placeholder="Ex.: galpão atrás do posto, Sandy Shores"></div>
       <div class="largura-total campos-imagem">
         <div class="campo-imagem" data-campo="img_localizacao"><span class="rotulo">Imagem da localização</span></div>
         <div class="campo-imagem" data-campo="img_banner"><span class="rotulo">Banner</span></div>
@@ -286,6 +333,38 @@
   </figure>
 </div>
 
+<div id="modal-servidor" class="modal-fundo" hidden>
+  <form id="form-servidor" class="modal modal-largo cartao" role="dialog" aria-modal="true" aria-labelledby="servidor-titulo" novalidate>
+    <h2 id="servidor-titulo">🔁 Trocar de servidor do Discord</h2>
+    <div id="servidor-passo-1">
+      <p class="modal-texto">Servidor atual: <strong id="servidor-atual">—</strong></p>
+      <label class="rotulo" for="servidor-novo">ID do novo servidor <span class="obrigatorio">*</span></label>
+      <input id="servidor-novo" type="text" inputmode="numeric" maxlength="20" autocomplete="off" placeholder="Botão direito no ícone do servidor → Copiar ID do servidor">
+      <div class="aviso-troca">
+        <strong>⚠️ Ao trocar de servidor:</strong>
+        <ul>
+          <li>os nomes, fotos e cargos dos usuários passam a vir do novo servidor;</li>
+          <li>os cargos ligados aos perfis eram do servidor antigo e precisam ser escolhidos de novo na aba Gestão;</li>
+          <li>a categoria do fórum de parceiros é desligada (configure a do novo servidor);</li>
+          <li>os webhooks continuam os mesmos (troque-os se os canais mudaram).</li>
+        </ul>
+      </div>
+      <label class="checkbox"><input id="servidor-confirmo" type="checkbox"> Entendi e quero trocar de servidor</label>
+      <p id="servidor-erro" class="status erro" hidden></p>
+      <button id="servidor-confirmar" type="submit" class="botao-perigo botao-bloco">Confirmar troca de servidor</button>
+      <button type="button" class="botao-secundario botao-bloco" data-fechar-servidor>Cancelar</button>
+    </div>
+    <div id="servidor-passo-2" hidden>
+      <p class="modal-texto">✅ Servidor trocado. Agora adicione o bot ao novo servidor (abre o Discord já com o servidor escolhido):</p>
+      <a id="servidor-convite" class="botao-discord botao-bloco" href="#" target="_blank" rel="noopener">➕ Adicionar o bot ao novo servidor</a>
+      <button id="servidor-convite-copiar" type="button" class="botao botao-bloco">📋 Copiar convite para enviar a quem administra o servidor</button>
+      <p id="servidor-sem-token" class="dica" hidden>Salve o token do bot para gerar o convite.</p>
+      <p class="dica">Depois que o bot entrar, clique em <strong>🔄 Atualizar nomes do Discord</strong> (aba Usuários) e escolha os cargos dos perfis na aba Gestão.</p>
+      <button type="button" class="botao-primario botao-bloco" data-fechar-servidor>Concluir</button>
+    </div>
+  </form>
+</div>
+
 <div id="modal-pagamento" class="modal-fundo" hidden>
   <form id="form-pagamento" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="pagamento-titulo">
     <h2 id="pagamento-titulo">💸 Pagar vendedor</h2>
@@ -294,6 +373,13 @@
       <span class="dica">Valor a pagar</span>
       <strong id="pagamento-valor">—</strong>
       <span id="pagamento-ja-pago" class="dica"></span>
+    </div>
+    <div id="pagamento-id-bloco" class="pagamento-id">
+      <span class="dica">ID para pagamento</span>
+      <div class="barra-ferramentas">
+        <strong id="pagamento-id">—</strong>
+        <button id="pagamento-copiar-id" type="button" class="botao botao-pequeno">📋 Copiar ID</button>
+      </div>
     </div>
     <button id="pagamento-copiar" type="button" class="botao botao-bloco">📋 Copiar valor</button>
     <label class="rotulo" for="pagamento-observacao">Observação <span class="opcional">(opcional)</span></label>
@@ -307,7 +393,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=6"></script>
-<script src="js/admin.js?v=14"></script>
+<script src="js/comum.js?v=7"></script>
+<script src="js/admin.js?v=15"></script>
 </body>
 </html>

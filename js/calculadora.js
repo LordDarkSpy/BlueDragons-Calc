@@ -16,7 +16,8 @@
     cliente: $('cliente'),
     registrar: $('registrar'),
     status: $('status'),
-    copiar: $('copiar'),
+    campoCliente: $('campo-cliente'),
+    modoVisualizacao: $('modo-visualizacao'),
     limpar: $('limpar'),
     vendedorNome: $('vendedor-nome'),
     trocarVendedor: $('trocar-vendedor'),
@@ -38,7 +39,7 @@
 
   let produtos = [];
   let parcerias = [];
-  let sessao = null; // { id, nome } do vendedor logado
+  let sessao = null; // { id, nome, registra } do usuário logado
   let comParceria = false;
   let totalAtual = 0;
   let totalSucesso = 0;
@@ -50,8 +51,19 @@
     sessao = nova;
     els.vendedorNome.textContent = nova ? nova.nome : "—";
     els.trocarVendedor.textContent = nova ? "Sair" : "Entrar";
-    if (nova) atualizarMinhaSemana();
+    // Perfil que só visualiza: simula os valores, mas não registra.
+    const registra = !nova || nova.registra;
+    els.modoVisualizacao.hidden = registra;
+    [els.registrar, els.observacao, els.observacao.previousElementSibling].forEach((el) => { el.hidden = !registra; });
+    if (nova && nova.registra) atualizarMinhaSemana();
     else els.minhaSemana.hidden = true;
+  }
+
+  // Sem a permissão da calculadora: mostra só o aviso (e os links que o perfil pode abrir).
+  function mostrarSemCalculadora(sem) {
+    $('sem-calculadora').hidden = !sem;
+    document.querySelectorAll('.coluna-principal, .coluna-lateral').forEach((el) => { el.hidden = sem; });
+    els.principal.classList.toggle('largo', sem);
   }
 
   function mostrarErroVendedor(texto) {
@@ -76,11 +88,15 @@
       abrirModalVendedor(null);
       return mostrarErroVendedor(BD.mensagemErro(erro));
     }
+    BD.ajustarLinksTopo(perfil);
     if (perfil && perfil.cadastrado) {
-      definirSessao({ id: perfil.id, nome: perfil.nome });
+      mostrarSemCalculadora(!BD.pode(perfil, "ver_calculadora"));
+      definirSessao({ id: perfil.id, nome: perfil.nome, registra: BD.pode(perfil, "registrar_venda") });
       mostrarErroVendedor("");
       BD.fecharModal(els.modalVendedor);
+      BD.novidades(perfil);
     } else {
+      mostrarSemCalculadora(false);
       definirSessao(null);
       abrirModalVendedor(perfil);
     }
@@ -105,6 +121,7 @@
   }
 
   $("sair-nao-cadastrado").addEventListener("click", sair);
+  $("sair-sem-calculadora").addEventListener("click", () => { mostrarSemCalculadora(false); sair(); });
   $("tentar-novamente").addEventListener("click", verificarLogin);
   $("copiar-discord-id").addEventListener("click", (e) => {
     BD.copiar($("meu-discord-id").value).then(() => { e.target.textContent = "✅ ID copiado!"; });
@@ -217,7 +234,7 @@
   }
 
   function renderizarParcerias() {
-    els.selectParceria.innerHTML = '<option value="">Selecione a parceria…</option>'
+    els.selectParceria.innerHTML = '<option value="">Selecione o parceiro…</option>'
       + parcerias.map((p) => `<option value="${esc(p.id)}">${esc(p.nome)}</option>`).join('');
     els.semParcerias.hidden = parcerias.length > 0;
   }
@@ -234,7 +251,9 @@
   els.radios.forEach((radio) => {
     radio.addEventListener('change', () => {
       comParceria = document.querySelector('input[name="parceria"]:checked').value === 'com';
+      // Na parceria, o parceiro é o cliente; na pista, o cliente é opcional.
       els.campoParceria.hidden = !comParceria;
+      els.campoCliente.hidden = comParceria;
       els.selectParceria.classList.remove('invalido');
       produtos.forEach(atualizarLinha);
       atualizarResumo();
@@ -248,61 +267,72 @@
 
   els.limpar.addEventListener('click', limparTudo);
 
-  els.copiar.addEventListener('click', () => {
-    BD.copiar(String(Math.round(totalAtual))).then(() => {
-      els.copiar.textContent = '✅ Copiado!';
-      els.copiar.classList.add('copiado');
-      setTimeout(() => {
-        els.copiar.textContent = '📋 Copiar valor total';
-        els.copiar.classList.remove('copiado');
-      }, 1500);
-    });
-  });
-
   function mostrarStatus(texto, tipo) {
     els.status.textContent = texto;
     els.status.className = `status ${tipo}`;
     els.status.hidden = !texto;
   }
 
-  els.registrar.addEventListener('click', async () => {
+  // Registrar: confere os dados e abre a confirmação; a venda só é gravada ao confirmar.
+  els.registrar.addEventListener('click', () => {
     mostrarStatus('', '');
     if (!sessao) return abrirModalVendedor(null);
-    if (totalAtual <= 0 && !selecionados().length) return mostrarStatus('Adicione pelo menos um item antes de registrar.', 'erro');
+    if (!sessao.registra) return mostrarStatus('O seu perfil só visualiza a calculadora.', 'erro');
+    if (!selecionados().length) return mostrarStatus('Adicione pelo menos um item antes de registrar.', 'erro');
     if (comParceria && !els.selectParceria.value) {
       els.selectParceria.classList.add('invalido');
       els.selectParceria.focus();
-      return mostrarStatus('Selecione a parceria.', 'erro');
+      return mostrarStatus('Selecione o parceiro (cliente da venda).', 'erro');
     }
+    const cliente = comParceria ? els.selectParceria.selectedOptions[0].textContent : els.cliente.value.trim();
+    $('confirmar-tipo').textContent = comParceria ? '🤝 Parceria' : '🛣️ Pista';
+    $('confirmar-cliente').textContent = cliente || '— (não informado)';
+    $('confirmar-itens').innerHTML = selecionados().map((p) => `<li><span>${BD.iconeProduto(p, 'chip-img')} ${esc(p.nome)} x${quantidades[p.id]}</span><span>${formatarValor(precoAtual(p) * quantidades[p.id])}</span></li>`).join('');
+    $('confirmar-total').textContent = formatarValor(totalAtual);
+    const obs = els.observacao.value.trim();
+    $('confirmar-observacao').hidden = !obs;
+    $('confirmar-observacao').textContent = obs ? '📝 ' + obs : '';
+    $('confirmar-erro').hidden = true;
+    $('confirmar-ok').disabled = false;
+    $('confirmar-ok').textContent = '✅ Confirmar venda';
+    BD.abrirModal($('modal-confirmar'), $('confirmar-ok'));
+  });
 
+  $('confirmar-voltar').addEventListener('click', () => BD.fecharModal($('modal-confirmar')));
+  $('modal-confirmar').addEventListener('click', (e) => { if (e.target === $('modal-confirmar')) BD.fecharModal($('modal-confirmar')); });
+
+  $('confirmar-ok').addEventListener('click', async () => {
+    const botao = $('confirmar-ok');
+    if (botao.disabled) return;
     const itens = selecionados().map((p) => ({ produto_id: p.id, quantidade: quantidades[p.id] }));
     const parceriaNome = comParceria ? els.selectParceria.selectedOptions[0].textContent : '';
-
-    els.registrar.disabled = true;
-    els.registrar.textContent = '⏳ Registrando…';
+    botao.disabled = true;
+    botao.textContent = '⏳ Registrando…';
     const { data, error } = await db.rpc('registrar_venda', {
       p_itens: itens,
       p_parceria_id: comParceria ? els.selectParceria.value : null,
-      p_cliente: els.cliente.value.trim() || null,
+      p_cliente: comParceria ? null : (els.cliente.value.trim() || null),
       p_observacao: els.observacao.value.trim() || null,
     });
-    els.registrar.disabled = false;
-    els.registrar.textContent = '📝 Registrar venda';
+    botao.disabled = false;
+    botao.textContent = '✅ Confirmar venda';
 
     if (error) {
-      mostrarStatus(`Não foi possível registrar a venda: ${BD.mensagemErro(error)}`, 'erro');
-      if (/NAO_CADASTRADO|JWT/.test(error.message)) verificarLogin();
+      $('confirmar-erro').textContent = `Não foi possível registrar a venda: ${BD.mensagemErro(error)}`;
+      $('confirmar-erro').hidden = false;
+      if (/NAO_CADASTRADO|JWT/.test(error.message)) { BD.fecharModal($('modal-confirmar')); verificarLogin(); }
       if (/não está mais disponível/.test(error.message)) carregarCatalogo();
       return;
     }
 
+    BD.fecharModal($('modal-confirmar'));
     totalSucesso = Number(data.total);
     els.sucessoTotal.textContent = formatarValor(totalSucesso);
     els.sucessoDetalhe.textContent = `Venda #${data.numero} · ${comParceria ? 'Parceria — ' + parceriaNome : 'Pista'} · sua comissão ${formatarValor(data.comissao)}`;
     els.sucessoCopiar.textContent = '📋 Copiar valor';
     limparTudo();
     atualizarMinhaSemana();
-    BD.abrirModal(els.modalSucesso, els.sucessoOk);
+    BD.abrirModal(els.modalSucesso, els.sucessoCopiar);
   });
 
   els.sucessoOk.addEventListener('click', () => BD.fecharModal(els.modalSucesso));
@@ -314,7 +344,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!els.modalSucesso.hidden) BD.fecharModal(els.modalSucesso);
-    
+    else if (!$('modal-confirmar').hidden) BD.fecharModal($('modal-confirmar'));
   });
 
   // ---------------------------------------------------------------- tabela de preços

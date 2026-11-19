@@ -142,9 +142,15 @@
       $('ranking-entrar').textContent = 'Entrar com outra conta';
       return mostrarLogin(`Sua conta do Discord ainda não está cadastrada (ID ${perfil.discord_id || '—'}). Peça para a liderança liberar seu acesso.`);
     }
+    BD.ajustarLinksTopo(perfil);
+    if (!BD.pode(perfil, 'ver_ranking')) {
+      $('ranking-entrar').textContent = 'Entrar com outra conta';
+      return mostrarLogin('O seu perfil não tem acesso ao ranking. Peça à liderança para ajustar o seu perfil.');
+    }
     $('ranking-login').hidden = true;
     $('ranking-app').hidden = false;
     carregar();
+    BD.novidades(perfil);
   }
 
   iniciar();

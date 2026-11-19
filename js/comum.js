@@ -64,6 +64,77 @@
       return erro ? decodeURIComponent(erro.replace(/\+/g, ' ')) : '';
     },
 
+    // O perfil pode isto? (o líder pode tudo; o banco confere de novo em cada ação)
+    pode(perfil, permissao) {
+      return !!(perfil && (perfil.lider || (perfil.permissoes || {})[permissao]));
+    },
+
+    // Esconde os links do topo que o perfil não pode abrir.
+    ajustarLinksTopo(perfil) {
+      document.querySelectorAll('[data-link-permissao]').forEach((a) => {
+        a.hidden = !BD.pode(perfil, a.dataset.linkPermissao);
+      });
+    },
+
+    // ---------------------------------------------------------------- novidades
+    // Mostra, ao entrar, o que mudou desde a última visita (preços, produtos e parcerias).
+    async novidades(perfil, abrirTodas) {
+      if (!perfil || !perfil.cadastrado) return;
+      const botao = document.getElementById('botao-novidades');
+      const { data, error } = await BD.db.rpc('minhas_novidades', { p_todas: !!abrirTodas });
+      if (error || !data) return;
+      if (botao) {
+        botao.hidden = false;
+        botao.querySelector('.contador').textContent = data.novas > 0 ? String(Math.min(data.novas, 99)) : '';
+        botao.classList.toggle('tem-novas', data.novas > 0);
+        if (!botao._ligado) {
+          botao._ligado = true;
+          botao.addEventListener('click', () => BD.novidades(perfil, true));
+        }
+      }
+      if (!abrirTodas && !data.novas) return;
+      BD._modalNovidades(data.itens || [], abrirTodas);
+      if (data.novas > 0) {
+        await BD.db.rpc('marcar_novidades_vistas');
+        if (botao) { botao.querySelector('.contador').textContent = ''; botao.classList.remove('tem-novas'); }
+      }
+    },
+
+    _modalNovidades(itens, todas) {
+      let modal = document.getElementById('modal-novidades');
+      if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'modal-novidades';
+        modal.className = 'modal-fundo';
+        modal.hidden = true;
+        modal.innerHTML = `<div class="modal modal-largo cartao" role="dialog" aria-modal="true" aria-labelledby="novidades-titulo">
+            <h2 id="novidades-titulo">🔔 Novidades</h2>
+            <div id="novidades-lista"></div>
+            <button type="button" class="botao-primario botao-bloco" data-fechar-novidades>Entendi</button>
+          </div>`;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal || e.target.closest('[data-fechar-novidades]')) BD.fecharModal(modal);
+        });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) BD.fecharModal(modal); });
+      }
+      const ICONES = { preco: '💲', produto: '📦', parceria: '🤝' };
+      const ROTULOS = { preco: 'Preço', produto: 'Produto', parceria: 'Parceria' };
+      modal.querySelector('#novidades-titulo').textContent = todas ? '🔔 Novidades dos últimos 30 dias' : '🔔 Novidades desde a sua última visita';
+      modal.querySelector('#novidades-lista').innerHTML = itens.length
+        ? `<ul class="lista-novidades">${itens.map((n) => `
+            <li class="novidade-${BD.esc(n.tipo)}${n.nova ? ' nova' : ''}">
+              <span class="novidade-icone" aria-hidden="true">${ICONES[n.tipo] || '🔔'}</span>
+              <div>
+                <strong>${BD.esc(n.titulo)}</strong>${n.nova && todas ? ' <span class="etiqueta pendente">nova</span>' : ''}
+                ${n.descricao ? `<p>${BD.esc(n.descricao)}</p>` : ''}
+                <span class="dica">${ROTULOS[n.tipo] || ''} · ${BD.esc(BD.dataHoraBR(n.criado_em))}</span>
+              </div>
+            </li>`).join('')}</ul>`
+        : '<p class="vazio">Nenhuma novidade nos últimos 30 dias.</p>';
+      BD.abrirModal(modal, modal.querySelector('[data-fechar-novidades]'));
+    },
+
     // Imagem do produto (se tiver) ou o emoji.
     iconeProduto(p, classe) {
       if (p.imagem) return `<img class="${classe || 'produto-img'}" src="${BD.esc(p.imagem)}" alt="" loading="lazy">`;

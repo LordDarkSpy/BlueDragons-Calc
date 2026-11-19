@@ -7,20 +7,40 @@
     return;
   }
 
-  const cache = { vendedores: [], parcerias: [], produtos: [], vendas: [] };
+  const cache = { vendedores: [], parcerias: [], produtos: [], vendas: [], perfis: [] };
   let semanaInicio = BD.inicioSemana(new Date());
   let relatorioAtual = null;
   let meuDiscordId = null;
   let meuPerfil = {};
-  // Ações de impacto: o líder pode tudo; os outros, só o que o líder liberou para o cargo.
-  const pode = (permissao) => !!(meuPerfil.lider || (meuPerfil.permissoes || {})[permissao]);
+  // O líder pode tudo; os outros, o que o perfil deles libera (o banco confere de novo em cada ação).
+  const pode = (permissao) => BD.pode(meuPerfil, permissao);
+  // Tudo o que um perfil pode liberar (mesma lista de _permissoes_validas no banco).
   const PERMISSOES = [
-    { id: 'encerrar_parceria', nome: 'Encerrar / reativar parcerias', dica: 'Botão dentro de Editar parceria (exige motivo).' },
-    { id: 'registrar_pagamento', nome: 'Registrar pagamentos', dica: 'Botão "Pagar" no relatório semanal.' },
-    { id: 'cancelar_venda', nome: 'Cancelar / reativar vendas', dica: 'Aba Vendas.' },
-    { id: 'gerenciar_vendedores', nome: 'Cadastrar e editar vendedores', dica: 'Aba Vendedores (marcar administrador manual continua só com o líder).' },
-    { id: 'gerenciar_produtos', nome: 'Cadastrar e editar produtos e preços', dica: 'Aba Produtos.' },
+    { grupo: 'Páginas', itens: [
+      { id: 'ver_calculadora', nome: '🧮 Calculadora (ver e simular)' },
+      { id: 'registrar_venda', nome: '📝 Registrar vendas (vendedor)' },
+      { id: 'ver_ranking', nome: '🏆 Ranking' },
+      { id: 'ver_painel', nome: '⚙️ Painel (entrar)' },
+    ] },
+    { grupo: 'Abas do painel', dica: 'Só valem com "Painel" marcado.', itens: [
+      { id: 'ver_relatorio', nome: '📊 Relatório semanal' },
+      { id: 'ver_vendas', nome: '🧾 Vendas' },
+      { id: 'ver_usuarios', nome: '👤 Usuários' },
+      { id: 'ver_parcerias', nome: '🤝 Parcerias' },
+      { id: 'ver_produtos', nome: '📦 Produtos' },
+      { id: 'ver_gestao', nome: '🛡️ Gestão (só ver)' },
+    ] },
+    { grupo: 'Ações', itens: [
+      { id: 'editar_parcerias', nome: 'Cadastrar e editar parcerias' },
+      { id: 'encerrar_parceria', nome: 'Encerrar / reativar parcerias' },
+      { id: 'registrar_pagamento', nome: 'Registrar pagamentos' },
+      { id: 'cancelar_venda', nome: 'Cancelar / reativar vendas' },
+      { id: 'gerenciar_vendedores', nome: 'Cadastrar e editar usuários' },
+      { id: 'gerenciar_produtos', nome: 'Cadastrar e editar produtos e preços' },
+    ] },
   ];
+  // Permissão que cada aba exige (a do Discord é só do DEV).
+  const ABA_PERMISSAO = { relatorio: 'ver_relatorio', vendas: 'ver_vendas', vendedores: 'ver_usuarios', parcerias: 'ver_parcerias', produtos: 'ver_produtos', gestao: 'ver_gestao' };
 
   // ================================================================ autenticação
 
@@ -49,6 +69,7 @@
     $("usuario-admin").textContent = perfil.nome || perfil.apelido || session.user.email || "";
     meuDiscordId = perfil.discord_id;
     meuPerfil = perfil;
+    BD.ajustarLinksTopo(perfil);
     if (!perfil.admin) {
       $("sem-permissao-id").value = perfil.discord_id || "";
       $("sem-permissao").hidden = false;
@@ -56,6 +77,7 @@
     }
     $("app").hidden = false;
     iniciarPainel();
+    BD.novidades(perfil);
   }
 
   $("login-entrar").addEventListener("click", async () => {
@@ -91,11 +113,13 @@
     config: carregarConfig,
     gestao: carregarGestao,
   };
-  const SO_LIDER = ['gestao'];  // líder (e DEV)
-  const SO_DEV = ['config'];    // Discord e opções gerais: só o DEV (definido no banco)
+  // Pode abrir a aba? (Discord e opções gerais: só o DEV, definido no banco)
+  const podeAba = (nome) => (nome === 'config' ? !!meuPerfil.dev : pode(ABA_PERMISSAO[nome]));
+  const abasLiberadas = () => Object.keys(carregadores).filter(podeAba);
 
   function abrirAba(nome) {
-    if ((SO_LIDER.includes(nome) && !meuPerfil.lider) || (SO_DEV.includes(nome) && !meuPerfil.dev)) nome = 'relatorio';
+    if (!podeAba(nome)) nome = abasLiberadas()[0];
+    if (!nome) return;
     document.querySelectorAll('[data-aba]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.aba === nome)));
     Object.keys(carregadores).forEach((aba) => { $(`aba-${aba}`).hidden = aba !== nome; });
     BD.salvar('bluedragons-aba', nome);
@@ -109,24 +133,28 @@
     if (painelIniciado) return;
     painelIniciado = true;
     // Mostra só o que a pessoa pode usar.
-    SO_LIDER.forEach((aba) => { document.querySelector(`[data-aba="${aba}"]`).hidden = !meuPerfil.lider; });
-    SO_DEV.forEach((aba) => { document.querySelector(`[data-aba="${aba}"]`).hidden = !meuPerfil.dev; });
+    document.querySelectorAll('[data-aba]').forEach((b) => { b.hidden = !podeAba(b.dataset.aba); });
+    $('sem-abas').hidden = abasLiberadas().length > 0;
     document.querySelector('[data-novo="vendedor"]').hidden = !pode('gerenciar_vendedores');
     document.querySelector('[data-novo="produto"]').hidden = !pode('gerenciar_produtos');
+    document.querySelector('[data-novo="parceria"]').hidden = !pode('editar_parcerias');
+    $('relatorio-discord').hidden = !pode('ver_relatorio');
     await Promise.all([carregarListasBase(), carregarConfig()]);
     const salva = BD.lerSalvo('bluedragons-aba');
-    abrirAba(carregadores[salva] ? salva : 'relatorio');
+    abrirAba(carregadores[salva] ? salva : abasLiberadas()[0]);
   }
 
   async function carregarListasBase() {
-    const [ve, pa, pr] = await Promise.all([
-      db.from('vendedores').select('id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em, cargos').order('nome'),
+    const [ve, pa, pr, pf] = await Promise.all([
+      db.from('vendedores').select('id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em, cargos, avatar, id_pagamento, perfil_id').order('nome'),
       db.from('parcerias').select('*').order('nome'),
       db.from('produtos').select('*').order('ordem').order('nome'),
+      db.from('perfis').select('*').order('ordem').order('nome'),
     ]);
     cache.vendedores = ve.data || [];
     cache.parcerias = pa.data || [];
     cache.produtos = pr.data || [];
+    cache.perfis = pf.data || [];
     $('vendas-vendedor').innerHTML = '<option value="">Todos</option>'
       + cache.vendedores.map((v) => `<option value="${esc(v.id)}">${esc(nomeVendedor(v))}</option>`).join('');
     $('vendas-parceria').innerHTML = '<option value="">Todas</option><option value="sem">Pista (sem parceria)</option>'
@@ -279,12 +307,24 @@
     $('pagamento-valor').textContent = formatarValor(x.pendente);
     $('pagamento-ja-pago').textContent = Number(x.pago) > 0
       ? `Comissão ${formatarValor(x.comissao)} · já pago ${formatarValor(x.pago)}` : `${x.quantidade} venda${x.quantidade === 1 ? '' : 's'} · ${formatarValor(x.total)} vendido`;
+    pagamentoAtual.id_pagamento = x.id_pagamento || '';
+    $('pagamento-id').textContent = x.id_pagamento || 'não cadastrado';
+    $('pagamento-id').classList.toggle('sem-id', !x.id_pagamento);
+    $('pagamento-copiar-id').hidden = !x.id_pagamento;
+    $('pagamento-copiar-id').textContent = '📋 Copiar ID';
     $('pagamento-copiar').textContent = '📋 Copiar valor';
     $('pagamento-copiar').classList.remove('copiado');
     $('pagamento-observacao').value = '';
     $('pagamento-erro').hidden = true;
     $('pagamento-registrar').disabled = false;
     BD.abrirModal($('modal-pagamento'), $('pagamento-copiar'));
+  });
+
+  $('pagamento-copiar-id').addEventListener('click', () => {
+    if (!pagamentoAtual || !pagamentoAtual.id_pagamento) return;
+    BD.copiar(pagamentoAtual.id_pagamento)
+      .then(() => { $('pagamento-copiar-id').textContent = '✅ ID copiado!'; })
+      .catch(() => { $('pagamento-copiar-id').textContent = 'Anote o ID acima'; });
   });
 
   $('pagamento-copiar').addEventListener('click', () => {
@@ -401,7 +441,7 @@
           <td>${v.numero}</td>
           <td style="white-space:nowrap">${BD.dataHoraBR(v.criado_em)}</td>
           <td>${esc(v.vendedor_nome)}</td>
-          <td>${esc(v.cliente || '—')}</td>
+          <td>${esc(v.cliente || (v.com_parceria ? v.parceria_nome : '') || '—')}</td>
           <td>${v.com_parceria ? `<span class="etiqueta parceria">${esc(v.parceria_nome || 'Parceria')}</span>` : '<span class="etiqueta">Pista</span>'}</td>
           <td><ul class="itens-venda">${v.venda_itens.map((i) => `<li>${BD.iconeProduto(produtoDoItem(i), 'chip-img')} ${esc(i.produto_nome)} x${i.quantidade}</li>`).join('')}</ul>
             ${v.cancelada && v.cancelada_motivo ? `<div class="motivo-cancelamento">⛔ Cancelada${v.cancelada_por ? ' por ' + esc(v.cancelada_por) : ''}${v.cancelada_em ? ' em ' + esc(BD.dataHoraBR(v.cancelada_em)) : ''}: ${esc(v.cancelada_motivo)}</div>` : ''}
@@ -462,7 +502,7 @@
   $('vendas-csv').addEventListener('click', () => {
     const linhas = [['Número', 'Data', 'Vendedor', 'Cliente', 'Parceria', 'Produto', 'Quantidade', 'Preço unitário', 'Subtotal', 'Total da venda', 'Comissão da venda', 'Observação', 'Cancelada', 'Justificativa do cancelamento']];
     cache.vendas.forEach((v) => v.venda_itens.forEach((i) => linhas.push([
-      v.numero, BD.dataHoraBR(v.criado_em), v.vendedor_nome, v.cliente || '', v.com_parceria ? v.parceria_nome : 'Pista',
+      v.numero, BD.dataHoraBR(v.criado_em), v.vendedor_nome, v.cliente || (v.com_parceria ? v.parceria_nome : '') || '', v.com_parceria ? v.parceria_nome : 'Pista',
       i.produto_nome, i.quantidade, i.preco_unitario, i.subtotal, v.total, v.comissao, v.observacao || '', v.cancelada ? 'Sim' : 'Não', v.cancelada_motivo || '',
     ])));
     baixarCSV(`vendas-${$('vendas-de').value || 'inicio'}-a-${$('vendas-ate').value || 'hoje'}.csv`, linhas);
@@ -485,6 +525,12 @@
     }
     if (c.tipo === 'checkbox') {
       return `<label class="checkbox largura-total"><input id="${id}" type="checkbox" ${valor ? 'checked' : ''}> ${esc(c.rotulo)}</label>`;
+    }
+    if (c.tipo === 'select') {
+      return `<div class="${c.largo ? 'largura-total' : ''}">
+        <label class="rotulo" for="${id}">${esc(c.rotulo)} ${c.obrigatorio ? '<span class="obrigatorio">*</span>' : ''}</label>
+        <select id="${id}" ${c.desativado ? 'disabled' : ''}>${c.opcoes.map((o) => `<option value="${esc(o.valor)}" ${String(o.valor) === String(valor) ? 'selected' : ''}>${esc(o.texto)}</option>`).join('')}</select>
+        ${c.dica ? `<p class="dica">${esc(c.dica)}</p>` : ''}</div>`;
     }
     const entrada = c.tipo === 'textarea'
       ? `<textarea id="${id}" maxlength="${c.max || 300}" rows="3">${esc(valor)}</textarea>`
@@ -599,64 +645,77 @@
     const container = $('vendedores-tabela');
     await Promise.all([carregarListasBase(), carregarCargos()]);
     if (!cache.vendedores.length) {
-      container.innerHTML = '<p class="vazio">Nenhum vendedor cadastrado. Clique em "+ Novo vendedor".</p>';
+      container.innerHTML = '<p class="vazio">Nenhum usuário cadastrado. Clique em "+ Novo usuário".</p>';
       return;
     }
     container.innerHTML = `<table>
-      <thead><tr><th>Nome no Discord</th><th>ID do Discord</th><th>Acesso</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Nome no Discord</th><th>ID do Discord</th><th>ID para pagamento</th><th>Perfil</th><th>Status</th><th></th></tr></thead>
       <tbody>${cache.vendedores.map((v) => `
         <tr>
           <td><strong>${esc(nomeVendedor(v))}</strong>${v.nome_discord && v.nome_discord !== v.nome ? `<div class="dica">cadastro: ${esc(v.nome)}</div>` : ''}${!v.nome_discord ? '<div class="dica">nome do servidor ainda não buscado</div>' : ''}</td>
           <td><code>${esc(v.discord_id)}</code>${v.discord_id === meuDiscordId ? ' <span class="dica">(você)</span>' : ''}</td>
-          <td>${acessoVendedor(v)}</td>
+          <td>${v.id_pagamento ? `<code>${esc(v.id_pagamento)}</code>` : '<span class="dica">—</span>'}</td>
+          <td>${perfisDoUsuario(v)}</td>
           <td>${etiquetaAtivo(v.ativo)}${v.no_servidor === false ? ' <span class="etiqueta inativo">Fora do servidor</span>' : ''}</td>
           <td class="acoes">${pode('gerenciar_vendedores') ? `<button type="button" class="botao botao-pequeno" data-editar-vendedor="${esc(v.id)}">Editar</button>` : ''}</td>
         </tr>`).join('')}
       </tbody></table>`;
   }
 
+  // Perfis que um perfil pode dar: o líder dá qualquer um; os outros, só perfis com permissões que eles têm.
+  function perfisQuePossoDar(atualId) {
+    return cache.perfis.filter((p) => meuPerfil.lider || p.id === atualId || (p.permissoes || []).every((x) => pode(x)));
+  }
+
   function editarVendedor(v) {
     const novo = !v;
-    v = v || { ativo: true, admin: false };
-    abrirEdicao(novo ? "Novo vendedor" : `Editar ${v.nome}`, [
+    const padrao = cache.perfis.find((p) => semAcento(p.nome) === 'vendedor') || cache.perfis[0];
+    v = v || { ativo: true, admin: false, perfil_id: padrao ? padrao.id : '' };
+    const proprio = !novo && v.discord_id === meuDiscordId;
+    abrirEdicao(novo ? "Novo usuário" : `Editar ${nomeVendedor(v)}`, [
       { nome: "nome", rotulo: "Nome (reserva)", valor: v.nome, obrigatorio: true, max: 40, largo: true,
         dica: "O site mostra o nome que a pessoa usa no servidor do Discord. Este nome só aparece enquanto o do Discord não for encontrado." },
-      { nome: "discord_id", rotulo: "ID do Discord", valor: v.discord_id, obrigatorio: true, max: 20, inputmode: "numeric", largo: true,
-        dica: "É com ele que a pessoa entra no site. No Discord: Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no nome → Copiar ID do usuário." },
-      { nome: "ativo", rotulo: "Ativo (pode entrar e registrar vendas)", tipo: "checkbox", valor: v.ativo },
-      ...(meuPerfil.lider ? [{ nome: "admin", rotulo: "Administrador manual / líder (acessa tudo e gerencia permissões)", tipo: "checkbox", valor: v.admin,
-        dica: "Quem tem um dos cargos escolhidos na aba Gestão já acessa o painel sem marcar esta opção." }] : []),
+      { nome: "discord_id", rotulo: "ID do Discord", valor: v.discord_id, obrigatorio: true, max: 20, inputmode: "numeric",
+        dica: "É com ele que a pessoa entra no site. Discord: Configurações → Avançado → Modo desenvolvedor; botão direito no nome → Copiar ID do usuário." },
+      { nome: "id_pagamento", rotulo: "ID para pagamento", valor: v.id_pagamento, max: 40,
+        dica: "ID usado para receber a comissão. Aparece para quem for pagar, logo acima do valor." },
+      { nome: "perfil_id", rotulo: "Perfil", tipo: "select", valor: v.perfil_id || '', largo: true, desativado: proprio && !meuPerfil.lider,
+        opcoes: [{ valor: '', texto: '— sem perfil (só pelos cargos do Discord) —' },
+          ...perfisQuePossoDar(v.perfil_id).map((p) => ({ valor: p.id, texto: p.nome }))],
+        dica: proprio && !meuPerfil.lider ? "Você não pode mudar o seu próprio perfil." : "Define o que a pessoa vê e faz. Vendedor = calculadora + registrar vendas + ranking." },
+      { nome: "ativo", rotulo: "Ativo (pode entrar no site)", tipo: "checkbox", valor: v.ativo },
+      ...(meuPerfil.lider ? [{ nome: "admin", rotulo: "Administrador manual / líder (acessa tudo e gerencia os perfis)", tipo: "checkbox", valor: v.admin }] : []),
     ], async (val) => {
       if (!meuPerfil.lider) val.admin = !!v.admin; // só o líder mexe nisso
       if (val.nome.length < 2) throw new Error("O nome precisa ter pelo menos 2 letras.");
       if (!/^\d{17,20}$/.test(val.discord_id)) throw new Error("ID do Discord inválido: deve ter de 17 a 20 números.");
       const id = falhou(await db.rpc("salvar_vendedor", {
         p_id: novo ? null : v.id, p_nome: val.nome, p_discord_id: val.discord_id, p_ativo: val.ativo, p_admin: val.admin,
+        p_perfil_id: val.perfil_id || null, p_id_pagamento: val.id_pagamento || null,
       }));
       await carregarVendedores();
       sincronizarNomes(id, true);
     });
   }
 
-  // Cargos do servidor (para mostrar nomes) e cargos que dão acesso ao painel.
+  // Cargos do servidor (para mostrar nomes e ligar aos perfis).
   let cargosServidor = [];
-  let cargosAdmin = [];
 
   async function carregarCargos() {
-    const [rc, rcfg] = await Promise.all([
-      db.from('discord_cargos').select('id, nome, cor, posicao').order('posicao', { ascending: false }),
-      db.from('configuracoes').select('cargos_admin').eq('id', 1).single(),
-    ]);
+    const rc = await db.from('discord_cargos').select('id, nome, cor, posicao').order('posicao', { ascending: false });
     cargosServidor = rc.data || [];
-    cargosAdmin = (rcfg.data && rcfg.data.cargos_admin) || [];
   }
 
-  function acessoVendedor(v) {
-    const porCargo = (v.cargos || []).filter((id) => cargosAdmin.includes(id))
-      .map((id) => (cargosServidor.find((c) => c.id === id) || { nome: 'cargo ' + id }).nome);
-    if (porCargo.length) return `<span class="etiqueta">Administrador</span><div class="dica">pelo cargo ${esc(porCargo.join(', '))}${v.admin ? ' e manual' : ''}</div>`;
-    if (v.admin) return '<span class="etiqueta">Administrador</span><div class="dica">manual</div>';
-    return 'Vendedor';
+  // Perfil do cadastro + perfis que vêm dos cargos do Discord.
+  function perfisDoUsuario(v) {
+    const doCadastro = cache.perfis.find((p) => p.id === v.perfil_id);
+    const porCargo = cache.perfis.filter((p) => p.id !== v.perfil_id && (p.cargos || []).some((c) => (v.cargos || []).includes(c)));
+    const partes = [];
+    if (v.admin) partes.push('<span class="etiqueta parceria">👑 Líder</span>');
+    if (doCadastro) partes.push(`<span class="etiqueta">${esc(doCadastro.nome)}</span>`);
+    porCargo.forEach((p) => partes.push(`<span class="etiqueta">${esc(p.nome)}</span>`));
+    if (!partes.length) return '<span class="dica">sem perfil</span>';
+    return partes.join(' ') + (porCargo.length ? `<div class="dica">pelo cargo: ${esc(porCargo.map((p) => p.nome).join(', '))}</div>` : '');
   }
 
   function nomeVendedor(v) {
@@ -744,7 +803,9 @@
       if (status === 'encerrada' && p.ativo) return false;
       if (produto && !(p.produtos || []).some((n) => semAcento(n) === semAcento(produto))) return false;
       if (!busca) return true;
-      return semAcento(`${p.nome} ${p.responsavel || ''} ${p.feita_por_nome || ''} ${(p.produtos || []).join(' ')}`).includes(busca);
+      // todas as palavras digitadas precisam aparecer (em qualquer ordem)
+      const texto = semAcento(`${p.nome} ${p.responsavel || ''} ${p.feita_por_nome || ''} ${(p.produtos || []).join(' ')} ${p.observacoes || ''}`);
+      return busca.split(/\s+/).every((palavra) => texto.includes(palavra));
     });
   }
 
@@ -761,18 +822,24 @@
     if (filtroProduto.value !== escolhido) filtroProduto.value = '';
     // Total vendido por parceria na semana atual.
     const ini = BD.inicioSemana(new Date());
-    const { data: rel } = await db.rpc('relatorio_periodo', { p_inicio: BD.dataISO(ini), p_fim: BD.dataISO(BD.somarDias(ini, 6)) });
-    semanaParcerias = Object.fromEntries(((rel && rel.por_parceria) || []).map((x) => [x.nome, x]));
+    const { data: sem } = await db.rpc('vendas_por_parceria', { p_inicio: BD.dataISO(ini), p_fim: BD.dataISO(BD.somarDias(ini, 6)) });
+    semanaParcerias = Object.fromEntries((sem || []).map((x) => [x.parceria_id, x]));
     await renderizarParcerias();
   }
 
   async function renderizarParcerias() {
     const container = $('parcerias-tabela');
+    $('parcerias-limpar').hidden = !$('parcerias-busca').value;
     if (!cache.parcerias.length) {
-      container.innerHTML = '<p class="vazio">Nenhuma parceria cadastrada. Clique em "+ Nova parceria".</p>';
+      $('parcerias-contagem').textContent = '';
+      container.innerHTML = `<p class="vazio">Nenhuma parceria cadastrada.${pode('editar_parcerias') ? ' Clique em "+ Nova parceria".' : ''}</p>`;
       return;
     }
     const lista = parceriasFiltradas();
+    const filtrando = $('parcerias-busca').value.trim() || $('parcerias-produto').value || $('parcerias-status').value;
+    $('parcerias-contagem').textContent = filtrando
+      ? `${lista.length} de ${cache.parcerias.length} parceria${cache.parcerias.length === 1 ? '' : 's'}`
+      : `${cache.parcerias.length} parceria${cache.parcerias.length === 1 ? '' : 's'} · ${cache.parcerias.filter((p) => p.ativo).length} ativa${cache.parcerias.filter((p) => p.ativo).length === 1 ? '' : 's'}`;
     if (!lista.length) {
       container.innerHTML = '<p class="vazio">Nenhuma parceria encontrada com esse filtro.</p>';
       return;
@@ -781,7 +848,7 @@
     container.innerHTML = `<table class="tabela-parcerias">
       <thead><tr><th>Parceria</th><th>Produtos</th><th>Feita por</th><th class="num">Semana</th><th>Status</th><th></th></tr></thead>
       <tbody>${lista.map((p) => {
-        const sem = semanaParcerias[p.nome];
+        const sem = semanaParcerias[p.id];
         return `<tr class="${p.ativo ? '' : 'encerrada'}">
           <td>
             <div class="parceria-nome">
@@ -795,7 +862,7 @@
           <td>${p.ativo ? '<span class="etiqueta ativo">Ativa</span>' : `<span class="etiqueta inativo">Encerrada</span>${p.encerrada_em ? `<div class="dica">${esc(BD.dataBR(p.encerrada_em))}</div>` : ''}`}</td>
           <td class="acoes">
             <button type="button" class="botao-primario botao-pequeno" data-ver-parceria="${esc(p.id)}">👁️ Visualizar</button>
-            <button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">Editar</button>
+            ${pode('editar_parcerias') ? `<button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">Editar</button>` : ''}
           </td>
         </tr>`;
       }).join('')}
@@ -803,6 +870,13 @@
   }
 
   ['parcerias-busca', 'parcerias-produto', 'parcerias-status'].forEach((id) => $(id).addEventListener('input', renderizarParcerias));
+  $('parcerias-limpar').addEventListener('click', () => { $('parcerias-busca').value = ''; renderizarParcerias(); $('parcerias-busca').focus(); });
+  $('parcerias-busca').addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.value) { e.stopPropagation(); e.target.value = ''; renderizarParcerias(); } });
+
+  // Fórum de parceiros no Discord: atualiza logo depois de mudar uma parceria (sem travar a tela).
+  function atualizarForum() {
+    db.rpc('forum_atualizar').then(() => {}, () => {});
+  }
 
   // ---------------------------------------------------------------- cadastro
 
@@ -913,7 +987,6 @@
     $('parceria-titulo').textContent = p ? `Editar ${p.nome}` : 'Nova parceria';
     $('parceria-nome').value = p ? p.nome : '';
     $('parceria-responsavel').value = (p && p.responsavel) || '';
-    $('parceria-localizacao').value = (p && p.localizacao) || '';
     $('parceria-observacoes').value = (p && p.observacoes) || '';
     const meuId = (cache.vendedores.find((v) => v.discord_id === meuDiscordId) || {}).id || '';
     $('parceria-feita-por').innerHTML = '<option value="">—</option>'
@@ -989,7 +1062,6 @@
       const dados = {
         nome,
         responsavel: $('parceria-responsavel').value.trim() || null,
-        localizacao: $('parceria-localizacao').value.trim() || null,
         observacoes: $('parceria-observacoes').value.trim() || null,
         feita_por_id: $('parceria-feita-por').value || null,
         produtos: (() => { const sobra = $('parceria-produto-novo').value.trim(); if (sobra) adicionarProduto(sobra); return produtosEscolhidos.slice(); })(),
@@ -1018,6 +1090,7 @@
 
       BD.fecharModal($('modal-parceria'));
       BD.toast('Parceria salva.', 'ok');
+      atualizarForum();
       await carregarParcerias();
     } catch (err) {
       erro.textContent = BD.mensagemErro(err);
@@ -1063,6 +1136,7 @@
     BD.fecharModal($('modal-encerrar'));
     BD.fecharModal($('modal-parceria'));
     BD.toast('Parceria encerrada.', 'ok');
+    atualizarForum();
     await carregarParcerias();
     if (!$('modal-perfil').hidden) verParceria(encerrando.id);
   });
@@ -1073,6 +1147,7 @@
     const { error } = await db.rpc('reativar_parceria', { p_id: p.id });
     if (!error) BD.fecharModal($('modal-parceria'));
     BD.toast(error ? BD.mensagemErro(error) : 'Parceria reativada.', error ? 'erro' : 'ok');
+    if (!error) atualizarForum();
     await carregarParcerias();
     if (!$('modal-perfil').hidden) verParceria(p.id);
   }
@@ -1111,13 +1186,15 @@
         ${p.encerrada_por ? ` por ${esc(p.encerrada_por)}` : ''}<p>Motivo: ${esc(p.encerrada_motivo || '—')}</p></div>`}
       <div class="perfil-acoes">
         ${p.img_localizacao && url(p.img_localizacao) ? `<button type="button" class="botao-primario botao-pequeno" data-ampliar="${esc(url(p.img_localizacao))}" data-titulo="Localização">📍 Ver localização</button>` : ''}
-        <button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">✏️ Editar</button>
+        ${pode('editar_parcerias') ? `<button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">✏️ Editar</button>` : ''}
+        ${pode('encerrar_parceria') ? (p.ativo
+          ? `<button type="button" class="botao-perigo botao-pequeno" data-encerrar-parceria="${esc(p.id)}">⛔ Encerrar</button>`
+          : `<button type="button" class="botao botao-pequeno" data-reativar-parceria="${esc(p.id)}">✅ Reativar</button>`) : ''}
       </div>
       <dl class="perfil-dados">
         <div><dt>Quem fez a parceria</dt><dd>${esc(p.feita_por_nome || '—')}</dd></div>
         <div><dt>Responsável / contato</dt><dd>${esc(p.responsavel || '—')}</dd></div>
         <div><dt>Cadastrada em</dt><dd>${esc(BD.dataHoraBR(p.criado_em))}</dd></div>
-        <div><dt>Localização</dt><dd>${esc(p.localizacao || '—')}</dd></div>
         <div class="largura-total"><dt>Produtos que vendem</dt><dd>${chipsProdutos(p.produtos)}</dd></div>
         ${p.observacoes ? `<div class="largura-total"><dt>Observações</dt><dd>${esc(p.observacoes)}</dd></div>` : ''}
       </dl>
@@ -1193,11 +1270,12 @@
       return;
     }
     container.innerHTML = `<table>
-      <thead><tr><th>Ordem</th><th>Produto</th><th>Categoria</th><th class="num">Parceria</th><th class="num">Pista</th><th>Craft / un.</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Ordem</th><th>Produto</th><th>Descrição</th><th>Categoria</th><th class="num">Parceria</th><th class="num">Pista</th><th>Craft / un.</th><th>Status</th><th></th></tr></thead>
       <tbody>${cache.produtos.map((p) => `
         <tr>
           <td>${p.ordem}</td>
-          <td><span class="produto-tabela-icone">${BD.iconeProduto(p, 'produto-img-pequena')}</span> <strong>${esc(p.nome)}</strong>${p.serve_para ? `<div class="dica">${esc(p.serve_para)}</div>` : ''}</td>
+          <td><span class="produto-tabela-icone">${BD.iconeProduto(p, 'produto-img-pequena')}</span> <strong>${esc(p.nome)}</strong></td>
+          <td class="coluna-descricao">${p.serve_para ? esc(p.serve_para) : '<span class="dica">—</span>'}</td>
           <td>${esc(p.categoria)}</td>
           <td class="num">${formatarValor(p.preco_com_parceria)}</td>
           <td class="num">${formatarValor(p.preco_sem_parceria)}</td>
@@ -1225,8 +1303,8 @@
       { nome: 'preco_sem_parceria', rotulo: 'Preço pista', tipo: 'number', min: 0, valor: p.preco_sem_parceria, obrigatorio: true },
       { nome: 'craft', rotulo: 'Craft: materiais usados por unidade', tipo: 'craft', valor: p.craft, sugestoes: materiaisConhecidos(),
         dica: 'Ex.: 1 Ferro, 1 Plástico, 1 Vidro. Escolha um material da lista ou digite um novo.' },
-      { nome: 'serve_para', rotulo: 'Serve para', tipo: 'textarea', valor: p.serve_para, max: 300, largo: true,
-        dica: 'Aparece na calculadora ao passar o mouse ou clicar na imagem do produto.' },
+      { nome: 'serve_para', rotulo: 'Descrição (serve para)', tipo: 'textarea', valor: p.serve_para, max: 300, largo: true,
+        dica: 'Aparece na lista de produtos e na calculadora ao passar o mouse ou clicar na imagem do produto.' },
       { nome: 'ativo', rotulo: 'Ativo (aparece na calculadora)', tipo: 'checkbox', valor: p.ativo },
     ], async (val) => {
       const com = Number(val.preco_com_parceria);
@@ -1263,73 +1341,163 @@
     ({ vendedor: editarVendedor, parceria: editarParceria, produto: editarProduto })[b.dataset.novo]();
   }));
 
-  // ================================================================ configurações / Discord
+  // ================================================================ gestão: perfis (só o líder altera)
 
-  const REGEX_WEBHOOK = /^https:\/\/(canary\.|ptb\.)?(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+  let perfisOriginais = [];
+  let novoPerfilSeq = 0;
 
-  // ================================================================ permissões (só líder)
+  function corCargo(c) {
+    return c.cor ? '#' + c.cor.toString(16).padStart(6, '0') : 'var(--texto-suave)';
+  }
 
-  let permissoesAtuais = {};
+  function cartaoPerfil(p) {
+    const usuarios = cache.vendedores.filter((v) => v.perfil_id === p.id).length;
+    const marcadas = new Set(p.permissoes || []);
+    const cargos = new Set(p.cargos || []);
+    return `<fieldset class="perfil-card" data-perfil="${esc(p.id)}">
+      <div class="perfil-topo">
+        <input class="perfil-nome" type="text" maxlength="40" value="${esc(p.nome || '')}" placeholder="Nome do perfil" aria-label="Nome do perfil">
+        <span class="dica">${usuarios} usuário${usuarios === 1 ? '' : 's'}</span>
+        <button type="button" class="botao-perigo botao-pequeno" data-remover-perfil aria-label="Excluir perfil">Excluir</button>
+      </div>
+      <div class="perfil-grupos">${PERMISSOES.map((g) => `
+        <div class="perfil-grupo">
+          <strong>${esc(g.grupo)}</strong>${g.dica ? `<span class="dica">${esc(g.dica)}</span>` : ''}
+          ${g.itens.map((i) => `<label class="checkbox"><input type="checkbox" data-permissao="${i.id}" ${marcadas.has(i.id) ? 'checked' : ''}> ${esc(i.nome)}</label>`).join('')}
+        </div>`).join('')}
+      </div>
+      <details class="perfil-cargos" ${cargos.size ? 'open' : ''}>
+        <summary>Cargos do Discord que dão este perfil <span class="dica">(${cargos.size} marcado${cargos.size === 1 ? '' : 's'})</span></summary>
+        ${cargosServidor.length ? `<div class="lista-cargos">${cargosServidor.map((c) => `
+          <label class="checkbox cargo-opcao"><input type="checkbox" data-cargo="${esc(c.id)}" ${cargos.has(c.id) ? 'checked' : ''}>
+            <span class="cargo-cor" style="background:${corCargo(c)}"></span> ${esc(c.nome)}</label>`).join('')}</div>`
+          : '<p class="dica">Nenhum cargo carregado. Clique em "Carregar cargos do servidor".</p>'}
+      </details>
+    </fieldset>`;
+  }
 
   async function carregarGestao() {
-    renderizarCargos();
-    const el = $('permissoes-lista');
+    const el = $('perfis-lista');
     el.innerHTML = '<p class="carregando">Carregando…</p>';
-    const [, cfg] = await Promise.all([carregarCargos(), db.from('configuracoes').select('permissoes').eq('id', 1).single()]);
-    if (cfg.error) { el.innerHTML = `<p class="status erro">${esc(BD.mensagemErro(cfg.error))}</p>`; return; }
-    permissoesAtuais = cfg.data.permissoes || {};
-    if (!cargosServidor.length) {
-      el.innerHTML = '<p class="dica">Nenhum cargo carregado ainda. Clique em "Carregar cargos do servidor" acima (o token do bot é configurado pelo DEV na aba Discord).</p>';
-      return;
-    }
-    el.innerHTML = PERMISSOES.map((perm) => `
-      <fieldset class="permissao" data-permissao="${perm.id}">
-        <legend>${esc(perm.nome)}</legend>
-        <p class="dica">${esc(perm.dica)}</p>
-        <div class="lista-cargos">${cargosServidor.map((c) => {
-          const cor = c.cor ? '#' + c.cor.toString(16).padStart(6, '0') : 'var(--texto-suave)';
-          const marcado = (permissoesAtuais[perm.id] || []).includes(c.id);
-          return `<label class="checkbox cargo-opcao"><input type="checkbox" value="${esc(c.id)}" ${marcado ? 'checked' : ''}>
-            <span class="cargo-cor" style="background:${cor}"></span> ${esc(c.nome)}</label>`;
-        }).join('')}</div>
-      </fieldset>`).join('');
+    await Promise.all([carregarCargos(), carregarListasBase()]);
+    perfisOriginais = JSON.parse(JSON.stringify(cache.perfis));
+    el.innerHTML = cache.perfis.length ? cache.perfis.map(cartaoPerfil).join('') : '<p class="vazio">Nenhum perfil ainda. Clique em "+ Novo perfil".</p>';
+    // Quem só vê a gestão (sem ser líder) não altera nada.
+    const leitura = !meuPerfil.lider;
+    $('gestao-somente-leitura').hidden = !leitura;
+    $('aba-gestao').querySelectorAll('input, select, textarea').forEach((i) => { i.disabled = leitura; });
+    ['permissoes-salvar', 'perfil-novo', 'cfg-carregar-cargos'].forEach((id) => { $(id).hidden = leitura; });
+    el.querySelectorAll('[data-remover-perfil]').forEach((btn) => { btn.hidden = leitura; });
+  }
+
+  $('perfil-novo').addEventListener('click', () => {
+    const el = $('perfis-lista');
+    if (el.querySelector('.vazio')) el.innerHTML = '';
+    el.insertAdjacentHTML('beforeend', cartaoPerfil({ id: `novo-${++novoPerfilSeq}`, nome: '', permissoes: ['ver_calculadora'], cargos: [] }));
+    el.lastElementChild.querySelector('.perfil-nome').focus();
+  });
+
+  $('perfis-lista').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-remover-perfil]');
+    if (!btn) return;
+    const card = btn.closest('[data-perfil]');
+    const id = card.dataset.perfil;
+    const usuarios = cache.vendedores.filter((v) => v.perfil_id === id).length;
+    if (usuarios && !confirm(`${usuarios} usuário(s) usam este perfil e ficarão sem perfil (só com o que os cargos derem). Excluir mesmo? (só vale ao salvar)`)) return;
+    card.remove();
+  });
+
+  function lerPerfis() {
+    return [...document.querySelectorAll('#perfis-lista [data-perfil]')].map((card) => ({
+      id: card.dataset.perfil,
+      nome: card.querySelector('.perfil-nome').value.replace(/\s+/g, ' ').trim(),
+      permissoes: [...card.querySelectorAll('[data-permissao]:checked')].map((i) => i.dataset.permissao),
+      cargos: [...card.querySelectorAll('[data-cargo]:checked')].map((i) => i.dataset.cargo),
+    }));
   }
 
   $('permissoes-salvar').addEventListener('click', async () => {
     const pct = Number($('cfg-comissao').value);
     if (!(pct >= 0 && pct <= 100)) return BD.toast('A comissão deve ficar entre 0 e 100%.', 'erro');
-    const novas = {};
-    document.querySelectorAll('#permissoes-lista [data-permissao]').forEach((f) => {
-      novas[f.dataset.permissao] = [...f.querySelectorAll('input:checked')].map((i) => i.value);
-    });
+    const perfis = lerPerfis();
+    const semNome = perfis.find((p) => p.nome.length < 2);
+    if (semNome) return BD.toast('Dê um nome (2 letras ou mais) a cada perfil.', 'erro');
+    const nomes = perfis.map((p) => semAcento(p.nome));
+    if (nomes.some((n, i) => nomes.indexOf(n) !== i)) return BD.toast('Há dois perfis com o mesmo nome.', 'erro');
+
     const botao = $('permissoes-salvar');
     botao.disabled = true;
-    const { error } = await db.from('configuracoes').update({
-      permissoes: novas,
-      cargos_admin: [...document.querySelectorAll('#cfg-cargos input:checked')].map((i) => i.value),
-      nome_organizacao: $('cfg-nome').value.trim() || 'Blue Dragons',
-      moeda: $('cfg-moeda').value || 'R$ ',
-      percentual_comissao: pct / 100,
-      atualizado_em: new Date().toISOString(),
-    }).eq('id', 1);
-    botao.disabled = false;
-    BD.toast(error ? BD.mensagemErro(error) : 'Gestão salva.', error ? 'erro' : 'ok');
-    if (!error) BD.moeda = $('cfg-moeda').value || 'R$ ';
-    if (!error) carregarCargos();
+    try {
+      const mesmo = (x, y) => JSON.stringify([...(x || [])].sort()) === JSON.stringify([...(y || [])].sort());
+      // Apagados, alterados e novos.
+      const ficam = new Set(perfis.map((p) => p.id));
+      for (const p of perfisOriginais.filter((o) => !ficam.has(o.id))) {
+        falhou(await db.from('perfis').delete().eq('id', p.id));
+      }
+      for (const [i, p] of perfis.entries()) {
+        const dados = { nome: p.nome, permissoes: p.permissoes, cargos: p.cargos, ordem: (i + 1) * 10 };
+        if (p.id.startsWith('novo-')) {
+          falhou(await db.from('perfis').insert(dados));
+        } else {
+          const o = perfisOriginais.find((x) => x.id === p.id);
+          if (!o || o.nome !== p.nome || !mesmo(o.permissoes, p.permissoes) || !mesmo(o.cargos, p.cargos) || o.ordem !== dados.ordem) {
+            falhou(await db.from('perfis').update(dados).eq('id', p.id));
+          }
+        }
+      }
+      falhou(await db.from('configuracoes').update({
+        nome_organizacao: $('cfg-nome').value.trim() || 'Blue Dragons',
+        moeda: $('cfg-moeda').value || 'R$ ',
+        percentual_comissao: pct / 100,
+        atualizado_em: new Date().toISOString(),
+      }).eq('id', 1));
+      BD.moeda = $('cfg-moeda').value || 'R$ ';
+      BD.toast('Gestão salva.', 'ok');
+    } catch (erro) {
+      BD.toast(BD.mensagemErro(erro), 'erro');
+    } finally {
+      botao.disabled = false;
+      carregarGestao();
+    }
   });
+
+  $('cfg-carregar-cargos').addEventListener('click', async () => {
+    await sincronizarNomes(null, false);
+    carregarGestao();
+  });
+
+  // ================================================================ configurações / Discord (só DEV)
+
+  const REGEX_WEBHOOK = /^https:\/\/(canary\.|ptb\.)?(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+  // Ver canais, Enviar mensagens, Gerenciar canais, Inserir links, Ler histórico, Gerenciar tópicos e Enviar mensagens em tópicos.
+  const PERMISSOES_BOT = '292057861136';
+  let configAtual = {};
+  let statusBot = {};
+
+  function linkConvite(servidor) {
+    if (!statusBot.app_id) return '';
+    return `https://discord.com/oauth2/authorize?client_id=${statusBot.app_id}&scope=bot&permissions=${PERMISSOES_BOT}`
+      + (servidor ? `&guild_id=${servidor}&disable_guild_select=true` : '');
+  }
 
   async function carregarConfig() {
     const { data, error } = await db.from('configuracoes').select('*').eq('id', 1).single();
     if (error) return BD.toast(BD.mensagemErro(error), 'erro');
+    configAtual = data;
     $('cfg-webhook-vendas').value = data.webhook_vendas || '';
     $('cfg-webhook-relatorios').value = data.webhook_relatorios || '';
+    $('cfg-webhook-pagamentos').value = data.webhook_pagamentos || '';
     $('cfg-notificar').checked = data.notificar_vendas;
     $('cfg-automatico').checked = data.relatorio_automatico;
+    $('cfg-relatorio-dia').value = String(data.relatorio_dia || 1);
+    $('cfg-relatorio-hora').value = String(data.relatorio_hora || '09:00').slice(0, 5);
+    $('cfg-site-url').value = data.site_url || '';
+    $('cfg-categoria').value = data.discord_categoria_parceiros || '';
     $('cfg-nome').value = data.nome_organizacao;
     $('cfg-moeda').value = data.moeda;
     $('cfg-comissao').value = Math.round(Number(data.percentual_comissao) * 1000) / 10;
     $('cfg-servidor').value = data.discord_servidor_id || '';
-    if (meuPerfil.dev) atualizarStatusBot();
+    if (meuPerfil.dev) { atualizarStatusBot(); atualizarStatusForum(); }
     BD.moeda = data.moeda || BD.moeda;
   }
 
@@ -1337,50 +1505,54 @@
     e.preventDefault();
     const vendas = $('cfg-webhook-vendas').value.trim();
     const relatorios = $('cfg-webhook-relatorios').value.trim();
-    for (const url of [vendas, relatorios]) {
+    const pagamentos = $('cfg-webhook-pagamentos').value.trim();
+    for (const url of [vendas, relatorios, pagamentos]) {
       if (url && !REGEX_WEBHOOK.test(url)) return BD.toast('URL de webhook do Discord inválida.', 'erro');
     }
-    const servidor = $('cfg-servidor').value.trim();
-    if (servidor && !/^\d{17,20}$/.test(servidor)) return BD.toast('ID do servidor inválido: deve ter de 17 a 20 números.', 'erro');
+    const categoria = $('cfg-categoria').value.trim();
+    if (categoria && !/^\d{17,20}$/.test(categoria)) return BD.toast('ID da categoria inválido: deve ter de 17 a 20 números.', 'erro');
+    const hora = $('cfg-relatorio-hora').value || '09:00';
+    let site = $('cfg-site-url').value.trim() || 'https://lorddarkspy.github.io/BlueDragons-Calc/';
+    if (!/^https:\/\//.test(site)) return BD.toast('O endereço do site precisa começar com https://', 'erro');
+    if (!site.endsWith('/')) site += '/';
     const botao = $('cfg-salvar');
     botao.disabled = true;
     const { error } = await db.from('configuracoes').update({
-      discord_servidor_id: servidor || null,
       webhook_vendas: vendas || null,
       webhook_relatorios: relatorios || null,
+      webhook_pagamentos: pagamentos || null,
       notificar_vendas: $('cfg-notificar').checked,
       relatorio_automatico: $('cfg-automatico').checked,
+      relatorio_dia: Number($('cfg-relatorio-dia').value),
+      relatorio_hora: hora,
+      site_url: site,
+      discord_categoria_parceiros: categoria || null,
       atualizado_em: new Date().toISOString(),
     }).eq('id', 1);
     botao.disabled = false;
     BD.toast(error ? BD.mensagemErro(error) : 'Configurações salvas.', error ? 'erro' : 'ok');
-  });
-
-  async function renderizarCargos() {
-    await carregarCargos();
-    const el = $('cfg-cargos');
-    if (!cargosServidor.length) {
-      el.innerHTML = '<p class="dica">Nenhum cargo carregado ainda. Salve o token do bot e clique em "Carregar cargos do servidor".</p>';
-      return;
+    if (!error) {
+      const mudouCategoria = (categoria || null) !== (configAtual.discord_categoria_parceiros || null);
+      await carregarConfig();
+      if (mudouCategoria && categoria) sincronizarForum();
     }
-    el.innerHTML = cargosServidor.map((c) => {
-      const cor = c.cor ? '#' + c.cor.toString(16).padStart(6, '0') : 'var(--texto-suave)';
-      return `<label class="checkbox cargo-opcao"><input type="checkbox" value="${esc(c.id)}" ${cargosAdmin.includes(c.id) ? 'checked' : ''}>
-        <span class="cargo-cor" style="background:${cor}"></span> ${esc(c.nome)}</label>`;
-    }).join('');
-  }
-
-  $('cfg-carregar-cargos').addEventListener('click', async () => {
-    await sincronizarNomes(null, false);
-    carregarGestao();
   });
 
   async function atualizarStatusBot() {
     const { data, error } = await db.rpc('discord_status');
     const el = $('cfg-bot-status');
     if (error) { el.textContent = BD.mensagemErro(error); return; }
+    statusBot = data || {};
     el.textContent = data.bot_configurado ? '✅ Token do bot salvo. Para trocar, cole um novo token.' : '⚠️ Nenhum token salvo ainda.';
+    const link = linkConvite(configAtual.discord_servidor_id);
+    $('cfg-convite').hidden = !link;
+    $('cfg-convite-link').href = link || '#';
   }
+
+  $('cfg-convite-copiar').addEventListener('click', () => {
+    const link = linkConvite(configAtual.discord_servidor_id);
+    if (link) BD.copiar(link).then(() => BD.toast('Convite do bot copiado.', 'ok'));
+  });
 
   $('cfg-salvar-token').addEventListener('click', async () => {
     const campo = $('cfg-token');
@@ -1404,6 +1576,105 @@
     b.disabled = false;
     BD.toast(error ? BD.mensagemErro(error) : 'Mensagem de teste enviada. Confira o canal no Discord.', error ? 'erro' : 'ok');
   }));
+
+  $('cfg-simulado').addEventListener('click', async () => {
+    const botao = $('cfg-simulado');
+    botao.disabled = true;
+    const { error } = await db.rpc('enviar_relatorio_simulado');
+    botao.disabled = false;
+    BD.toast(error ? BD.mensagemErro(error) : '🧪 Relatório simulado enviado. Confira o canal de relatórios no Discord.', error ? 'erro' : 'ok');
+  });
+
+  // ---------------------------------------------------------------- fórum de parceiros
+
+  function mostrarStatusForum(s) {
+    const el = $('cfg-forum-status');
+    const lista = $('cfg-forum-lista');
+    if (!s || !s.ativo) {
+      el.textContent = configAtual.discord_categoria_parceiros ? '⚠️ Salve o token do bot para ativar.' : 'Desligado (sem categoria).';
+      lista.innerHTML = '';
+      return;
+    }
+    if (s.ocupado) { el.textContent = '⏳ Já está sincronizando, tente em instantes.'; return; }
+    const foruns = s.foruns || [];
+    el.textContent = s.erro
+      ? `⚠️ ${s.erro}`
+      : `✅ ${foruns.length} fórum(ns), ${foruns.reduce((n, x) => n + Number(x.posts), 0)} post(s)`
+        + (s.faltam ? ` · ${s.faltam} para publicar` : '')
+        + (s.ok_em ? ` · última sincronização ${BD.dataHoraBR(s.ok_em)}` : '');
+    lista.innerHTML = foruns.map((x) => `<span class="chip"># ${esc(x.nome)} <strong>${esc(String(x.posts))}</strong></span>`).join('');
+  }
+
+  async function atualizarStatusForum() {
+    const { data, error } = await db.rpc('forum_status');
+    if (error) { $('cfg-forum-status').textContent = BD.mensagemErro(error); return; }
+    mostrarStatusForum(data);
+  }
+
+  async function sincronizarForum() {
+    const botao = $('cfg-forum-sincronizar');
+    botao.disabled = true;
+    $('cfg-forum-status').textContent = '⏳ Sincronizando com o Discord…';
+    const { data, error } = await db.rpc('forum_sincronizar_agora');
+    botao.disabled = false;
+    if (error) { $('cfg-forum-status').textContent = BD.mensagemErro(error); return; }
+    mostrarStatusForum(data);
+    if (data && data.ativo && !data.erro && data.faltam) BD.toast('Parte dos posts fica para o próximo minuto (o Discord limita as chamadas).', 'ok');
+  }
+
+  $('cfg-forum-sincronizar').addEventListener('click', () => {
+    if (($('cfg-categoria').value.trim() || null) !== (configAtual.discord_categoria_parceiros || null)) {
+      return BD.toast('Salve as configurações antes (a categoria mudou).', 'erro');
+    }
+    sincronizarForum();
+  });
+
+  // ---------------------------------------------------------------- trocar de servidor (com confirmação)
+
+  function fecharModalServidor() { BD.fecharModal($('modal-servidor')); }
+
+  $('cfg-trocar-servidor').addEventListener('click', () => {
+    $('servidor-atual').textContent = configAtual.discord_servidor_id || 'nenhum';
+    $('servidor-novo').value = '';
+    $('servidor-confirmo').checked = false;
+    $('servidor-erro').hidden = true;
+    $('servidor-confirmar').disabled = false;
+    $('servidor-passo-1').hidden = false;
+    $('servidor-passo-2').hidden = true;
+    BD.abrirModal($('modal-servidor'), $('servidor-novo'));
+  });
+
+  $('form-servidor').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const erro = $('servidor-erro');
+    const novoId = $('servidor-novo').value.trim();
+    const falha = (msg) => { erro.textContent = msg; erro.hidden = false; };
+    if (!/^\d{17,20}$/.test(novoId)) return falha('ID do servidor inválido: deve ter de 17 a 20 números.');
+    if (novoId === configAtual.discord_servidor_id) return falha('Esse já é o servidor atual.');
+    if (!$('servidor-confirmo').checked) return falha('Marque "Entendi e quero trocar de servidor" para confirmar.');
+    $('servidor-confirmar').disabled = true;
+    const { error } = await db.from('configuracoes').update({ discord_servidor_id: novoId, atualizado_em: new Date().toISOString() }).eq('id', 1);
+    if (error) { $('servidor-confirmar').disabled = false; return falha(BD.mensagemErro(error)); }
+    await carregarConfig();
+    await atualizarStatusBot();
+    const link = linkConvite(novoId);
+    $('servidor-convite').hidden = !link;
+    $('servidor-convite').href = link || '#';
+    $('servidor-convite-copiar').hidden = !link;
+    $('servidor-sem-token').hidden = !!link;
+    $('servidor-passo-1').hidden = true;
+    $('servidor-passo-2').hidden = false;
+    BD.toast('Servidor do Discord trocado.', 'ok');
+  });
+
+  $('servidor-convite-copiar').addEventListener('click', () => {
+    const link = linkConvite(configAtual.discord_servidor_id);
+    if (link) BD.copiar(link).then(() => { $('servidor-convite-copiar').textContent = '✅ Convite copiado!'; });
+  });
+  $('modal-servidor').addEventListener('click', (e) => {
+    if (e.target === $('modal-servidor') || e.target.closest('[data-fechar-servidor]')) fecharModalServidor();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal-servidor').hidden) fecharModalServidor(); });
 
   // ================================================================ início
 

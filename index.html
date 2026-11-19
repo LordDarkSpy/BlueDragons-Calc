@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calculadora de Venda — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=17">
+<link rel="stylesheet" href="css/style.css?v=18">
 </head>
 <body>
 
@@ -16,13 +16,21 @@
   </div>
   <div class="topo-barra">
       <div class="topo-acoes">
-        <a class="botao botao-pequeno" href="ranking.html">🏆 Ranking</a>
-        <a class="botao botao-pequeno" href="admin.html">⚙️ Painel</a>
+        <button id="botao-novidades" type="button" class="botao botao-pequeno botao-novidades" aria-label="Novidades" hidden>🔔<span class="contador"></span></button>
+        <a class="botao botao-pequeno" href="ranking.html" data-link-permissao="ver_ranking" hidden>🏆 Ranking</a>
+        <a class="botao botao-pequeno" href="admin.html" data-link-permissao="ver_painel" hidden>⚙️ Painel</a>
       </div>
   </div>
 </header>
 
 <main id="principal" class="container">
+
+  <section id="sem-calculadora" class="cartao login-admin" hidden>
+    <img class="modal-logo" src="img/logo.png" alt="" width="72" height="69">
+    <h2 style="justify-content:center">Sem acesso à calculadora</h2>
+    <p class="modal-texto">O seu perfil não inclui a calculadora. Use os links acima ou peça à liderança para ajustar o seu perfil.</p>
+    <button id="sair-sem-calculadora" type="button" class="botao botao-bloco">Entrar com outra conta</button>
+  </section>
 
   <div class="coluna-principal">
     <section class="cartao">
@@ -37,13 +45,7 @@
           <span>Parceria</span>
         </label>
       </div>
-      <div id="campo-parceria" hidden>
-        <label class="rotulo" for="select-parceria">Parceria <span class="obrigatorio">*</span></label>
-        <select id="select-parceria">
-          <option value="">Selecione a parceria…</option>
-        </select>
-        <p id="sem-parcerias" class="dica" hidden>Nenhuma parceria cadastrada. Peça a um administrador para cadastrar no painel.</p>
-      </div>
+      <p class="dica">Na parceria, o cliente é o próprio parceiro (escolha no resumo da venda).</p>
     </section>
 
     <section id="lista-itens" class="cartao" aria-live="polite">
@@ -60,6 +62,7 @@
         <button id="trocar-vendedor" type="button" class="botao-link">Sair</button>
       </div>
       <p id="minha-semana" class="minha-semana" hidden></p>
+      <p id="modo-visualizacao" class="aviso-visualizacao" hidden>👁️ <strong>Modo visualização:</strong> você pode simular os valores, mas o seu perfil não registra vendas.</p>
       <p id="resumo-tipo" class="resumo-tipo">Pista</p>
       <ul id="resumo-lista" class="resumo-lista">
         <li class="resumo-vazio">Nenhum item selecionado</li>
@@ -68,13 +71,21 @@
         <span>Total</span>
         <strong id="total-valor">R$ 0</strong>
       </div>
-      <label class="rotulo" for="cliente">Cliente <span class="opcional">(opcional)</span></label>
-      <input id="cliente" type="text" maxlength="60" autocomplete="off" placeholder="Ex.: nome ou organização do comprador">
+      <div id="campo-cliente">
+        <label class="rotulo" for="cliente">Cliente <span class="opcional">(opcional na pista)</span></label>
+        <input id="cliente" type="text" maxlength="60" autocomplete="off" placeholder="Ex.: nome do comprador">
+      </div>
+      <div id="campo-parceria" hidden>
+        <label class="rotulo" for="select-parceria">Cliente (parceiro) <span class="obrigatorio">*</span></label>
+        <select id="select-parceria">
+          <option value="">Selecione o parceiro…</option>
+        </select>
+        <p id="sem-parcerias" class="dica" hidden>Nenhuma parceria cadastrada. Peça a um administrador para cadastrar no painel.</p>
+      </div>
       <label class="rotulo" for="observacao">Observação <span class="opcional">(opcional)</span></label>
       <textarea id="observacao" maxlength="300" rows="2" placeholder="Ex.: entrega, combinado…"></textarea>
       <button id="registrar" type="button" class="botao-primario botao-bloco">📝 Registrar venda</button>
       <p id="status" class="status" role="status" hidden></p>
-      <button id="copiar" type="button" class="botao botao-bloco">📋 Copiar valor total</button>
       <button id="limpar" type="button" class="botao-secundario botao-bloco">Limpar tudo</button>
     </aside>
 
@@ -114,6 +125,23 @@
   </div>
 </div>
 
+<div id="modal-confirmar" class="modal-fundo" hidden>
+  <div class="modal modal-largo cartao" role="dialog" aria-modal="true" aria-labelledby="confirmar-titulo">
+    <h2 id="confirmar-titulo">Confirmar venda</h2>
+    <p class="modal-texto">Confira os dados antes de registrar.</p>
+    <dl class="confirmar-dados">
+      <div><dt>Tipo</dt><dd id="confirmar-tipo">—</dd></div>
+      <div><dt>Cliente</dt><dd id="confirmar-cliente">—</dd></div>
+    </dl>
+    <ul id="confirmar-itens" class="resumo-lista"></ul>
+    <div class="resumo-total"><span>Total</span><strong id="confirmar-total">R$ 0</strong></div>
+    <p id="confirmar-observacao" class="dica" hidden></p>
+    <p id="confirmar-erro" class="status erro" hidden></p>
+    <button id="confirmar-ok" type="button" class="botao-primario botao-bloco">✅ Confirmar venda</button>
+    <button id="confirmar-voltar" type="button" class="botao-secundario botao-bloco">Voltar e corrigir</button>
+  </div>
+</div>
+
 <div id="modal-sucesso" class="modal-fundo" hidden>
   <div class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="sucesso-titulo">
     <div class="sucesso-icone" aria-hidden="true">✓</div>
@@ -129,7 +157,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=6"></script>
-<script src="js/calculadora.js?v=6"></script>
+<script src="js/comum.js?v=7"></script>
+<script src="js/calculadora.js?v=7"></script>
 </body>
 </html>

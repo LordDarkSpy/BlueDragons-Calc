@@ -4,10 +4,13 @@ Site estático (HTML/CSS/JS puro) hospedado no GitHub Pages, com banco de dados 
 
 Substitui a planilha "VENDAS MERCADO OCULTO" (abas SERRA, PENDRIVE, PAGAMENTO e Base Valores e Craft):
 
-- **Calculadora** (`index.html`): o vendedor entra com a conta do **Discord**, escolhe **Pista** ou **Parceria**, informa o cliente, monta o pedido e registra a venda. Mostra também a tabela de preços com o link para copiar e enviar.
+- **Calculadora** (`index.html`): o vendedor entra com a conta do **Discord**, escolhe **Pista** ou **Parceria**, monta o pedido e registra a venda (com uma tela de confirmação antes de gravar). Na parceria, o **cliente é o próprio parceiro**; na pista, o cliente é opcional. Perfis "só visualizar" simulam os valores sem registrar.
 - **Ranking** (`ranking.html`): pódio e lista dos vendedores por total vendido, com a foto do Discord. Qualquer vendedor cadastrado vê; a comissão não aparece.
-- **Painel** (`admin.html`): relatório semanal (totais, ranking, **pagamento dos vendedores** e **craft usado**), histórico de vendas (cancelamento e exportação CSV), cadastro de vendedores, parcerias, produtos e configuração do Discord.
-- **Discord**: cada venda registrada gera um aviso no canal, e toda segunda-feira às 09:00 (horário de Brasília) sai o relatório da semana anterior. Também dá para enviar o relatório pelo painel quando quiser.
+- **Painel** (`admin.html`): relatório semanal (totais, ranking, **pagamento dos vendedores** com o ID para pagamento e **craft usado**), histórico de vendas (cancelamento e exportação CSV), cadastro de **usuários**, parcerias, produtos, gestão de **perfis** e configuração do Discord.
+- **Perfis de acesso** (aba Gestão, só o líder altera): cada perfil escolhe as páginas (Calculadora, Registrar vendas, Ranking, Painel), as abas do painel e as ações (cadastrar/editar parcerias, encerrar, pagar, cancelar vendas, usuários, produtos). Cada usuário recebe um perfil no cadastro, e um perfil também pode vir de um **cargo do Discord**. Na primeira execução do `schema.sql`, os acessos antigos por cargo viram perfis e todos os cadastros recebem o perfil **Vendedor**.
+- **Novidades**: ao entrar, cada usuário vê o que mudou desde a última visita (preços, produtos e parcerias). O 🔔 no topo reabre a lista dos últimos 30 dias.
+- **Discord**: cada venda registrada gera um aviso no canal; o relatório da semana anterior sai no dia e horário escolhidos na aba Discord (padrão: segunda às 09:00, Brasília), com embeds, logo e as imagens dos produtos. O botão **🧪 Enviar relatório simulado** manda um exemplo com dados fictícios. Os pagamentos podem ir para um **webhook próprio**.
+- **Fórum de parceiros**: com o ID de uma categoria configurado, o bot cria um fórum por produto vendido pelas parcerias (arma, munição…) e mantém um post por parceria, atualizado quando ela muda e apagado quando é encerrada.
 
 ### Regras herdadas da planilha
 
@@ -31,6 +34,7 @@ supabase/schema.sql  Banco: tabelas, regras de acesso (RLS), funções e agendam
 img/logo.png         Logo (Pixellab, usada sem alterações)
 img/tabela_v1.png    Tabela de preços enviada aos clientes
 img/produtos/*.svg   Ícones dos produtos (desenhos próprios; dá para trocar no painel)
+img/produtos/*.png   Os mesmos ícones em PNG (o Discord não mostra SVG nos embeds)
 ```
 
 Ao trocar a tabela de preços, salve com um nome novo (`tabela_v2.png`) e atualize `index.html` e `js/calculadora.js`, para o Discord não mostrar a imagem antiga em cache.
@@ -74,7 +78,15 @@ O site mostra o nome que cada pessoa usa **no servidor** do Discord. Quem busca 
 
 Na aba **🔔 Discord** → *Acesso ao painel por cargo*, clique em **Carregar cargos do servidor**, marque os cargos que podem usar o painel e salve. Quem tiver um desses cargos (e estiver cadastrado e ativo em Vendedores) passa a ver o painel; ao perder o cargo no Discord, perde o acesso no próximo login ou em até 10 minutos. A opção *Administrador manual* do cadastro continua valendo para quem precisa de acesso sem o cargo.
 
-Para trocar de servidor (por exemplo, sair do servidor de testes), basta mudar o ID do servidor no painel, salvar e adicionar o bot ao novo servidor.
+Para trocar de servidor (por exemplo, sair do servidor de testes), use **🔁 Trocar de servidor** na aba Discord: o painel pede confirmação, troca o ID e mostra o link de convite do bot já apontando para o novo servidor (dá para abrir ou copiar e mandar para quem administra o servidor). Depois, atualize os nomes e escolha de novo os cargos dos perfis.
+
+#### Fórum de parceiros
+
+1. Em **Database → Extensions**, ative a extensão **http** (o fórum edita posts, e o `pg_net` não faz isso) e rode o `schema.sql` de novo.
+2. Use o link de convite da aba Discord (ele já pede as permissões: Ver canais, Gerenciar canais, Enviar mensagens, Enviar mensagens em tópicos, Gerenciar tópicos, Inserir links e Ler histórico), ou dê essas permissões ao bot na categoria.
+3. Crie uma categoria no servidor, copie o ID (botão direito → Copiar ID do canal), cole em **ID da categoria de parceiros**, salve e clique em **🔄 Sincronizar agora**. Depois disso, o fórum se atualiza sozinho a cada minuto e logo após salvar uma parceria.
+
+As imagens das parcerias ficam no bucket privado e não vão para o fórum.
 
 ### 3. Conectar o site
 
@@ -94,9 +106,10 @@ A anon key é pública por natureza; quem protege os dados são as regras do `sc
 Abra `admin.html`, clique em **Entrar com Discord** e:
 
 1. **Produtos** → confira os preços (os da tabela atual já vêm cadastrados).
-2. **Vendedores** → cadastre cada pessoa com o **ID do Discord** (é com ele que ela entra). Marque *Administrador* para quem pode usar o painel.
-3. **Parcerias** → cadastre as organizações parceiras.
-4. **Discord** → cole as URLs dos webhooks (Canal → Editar → Integrações → Webhooks → Novo webhook → Copiar URL), clique em **Testar** e salve.
+2. **Gestão** → confira os perfis (Vendedor, Só calculadora, Só parcerias…) e ligue cargos do Discord a eles, se quiser.
+3. **Usuários** → cadastre cada pessoa com o **ID do Discord** (é com ele que ela entra), o **ID para pagamento** e o **perfil**. Marque *Administrador manual / líder* só para quem gerencia tudo.
+4. **Parcerias** → cadastre as organizações parceiras.
+5. **Discord** → cole as URLs dos webhooks (Canal → Editar → Integrações → Webhooks → Novo webhook → Copiar URL), clique em **Testar** e salve.
 
 ## Segurança
 

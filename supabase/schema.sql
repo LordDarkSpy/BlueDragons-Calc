@@ -7,6 +7,13 @@
 create extension if not exists pgcrypto with schema extensions;
 create extension if not exists pg_net;
 create extension if not exists pg_cron;
+-- Chamadas síncronas à API do Discord (fórum de parceiros: o pg_net não faz PATCH).
+do $$
+begin
+  create extension if not exists http with schema extensions;
+exception when others then
+  raise warning 'Extensão http indisponível (Database → Extensions → http): o fórum de parceiros não vai funcionar. %', sqlerrm;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- Tabelas
@@ -240,6 +247,68 @@ create table if not exists public.pagamentos (
 );
 create index if not exists pagamentos_semana_idx on public.pagamentos (semana_inicio, vendedor_id);
 
+-- Usuários: ID usado para receber o pagamento das comissões e última vez que viu as novidades.
+alter table public.vendedores add column if not exists id_pagamento text check (id_pagamento is null or length(id_pagamento) <= 40);
+alter table public.vendedores add column if not exists novidades_vistas_em timestamptz;
+
+-- Perfis de acesso (Vendedor, Só calculadora, Só parcerias…). O líder cria e edita na aba Gestão.
+-- permissoes: o que o perfil pode ver e fazer (ver _permissoes_validas).
+-- cargos: cargos do Discord que dão este perfil automaticamente (além do perfil do cadastro).
+create table if not exists public.perfis (
+  id uuid primary key default gen_random_uuid(),
+  nome text not null check (length(btrim(nome)) between 2 and 40),
+  permissoes text[] not null default '{}',
+  cargos text[] not null default '{}',
+  ordem int not null default 0,
+  criado_em timestamptz not null default now()
+);
+create unique index if not exists perfis_nome_idx on public.perfis (lower(nome));
+alter table public.vendedores add column if not exists perfil_id uuid references public.perfis (id) on delete set null;
+
+-- Novidades mostradas ao entrar no site (preços, produtos e parcerias).
+create table if not exists public.novidades (
+  id bigint generated always as identity primary key,
+  tipo text not null check (tipo in ('preco', 'produto', 'parceria')),
+  titulo text not null,
+  descricao text,
+  criado_em timestamptz not null default now()
+);
+create index if not exists novidades_criado_em_idx on public.novidades (criado_em);
+
+-- Discord: webhook só para os pagamentos, horário do relatório, endereço do site (imagens) e
+-- categoria onde o bot mantém os fóruns de parceiros.
+alter table public.configuracoes add column if not exists webhook_pagamentos text;
+alter table public.configuracoes add column if not exists relatorio_dia int not null default 1 check (relatorio_dia between 1 and 7); -- 1 = segunda
+alter table public.configuracoes add column if not exists relatorio_hora time not null default '09:00';
+alter table public.configuracoes add column if not exists relatorio_ultima_semana date;
+alter table public.configuracoes add column if not exists site_url text not null default 'https://lorddarkspy.github.io/BlueDragons-Calc/'
+  check (site_url ~ '^https://');
+alter table public.configuracoes add column if not exists discord_categoria_parceiros text
+  check (discord_categoria_parceiros is null or discord_categoria_parceiros ~ '^\d{17,20}$');
+
+-- Fórum de parceiros: um fórum por produto vendido (arma, munição…) e um post por parceria.
+create table if not exists public.discord_foruns (
+  chave text primary key,          -- nome do produto normalizado (sem acento, minúsculo)
+  nome text not null,
+  canal_id text,
+  atualizado_em timestamptz not null default now()
+);
+create table if not exists public.discord_posts (
+  parceria_id uuid not null,
+  chave text not null,
+  thread_id text not null,
+  nome text,
+  hash text,
+  atualizado_em timestamptz not null default now(),
+  primary key (parceria_id, chave)
+);
+-- Estado da sincronização (última leitura dos canais, último erro…).
+create table if not exists public.discord_estado (
+  chave text primary key,
+  valor text,
+  em timestamptz not null default now()
+);
+
 -- Produtos iniciais (tabela de preços do Mercado Oculto). Só entram se a tabela estiver vazia.
 insert into public.produtos (nome, icone, categoria, preco_com_parceria, preco_sem_parceria, craft_placa, craft_material, material_nome, ordem)
 select * from (values
@@ -310,21 +379,6 @@ as $$
   where ativo and discord_id = public._discord_id();
 $$;
 
-create or replace function public.is_admin()
-returns boolean
-language sql stable security definer
-set search_path = public
-as $$
-  -- Admin: marcado no cadastro OU com um dos cargos do servidor escolhidos no painel.
-  select exists (select 1 from public.admins where user_id = auth.uid())
-      or exists (select 1 from public.devs where discord_id = public._discord_id())
-      or exists (
-        select 1 from public.vendedores v, public.configuracoes c
-        where c.id = 1 and v.ativo and v.discord_id = public._discord_id()
-          and (v.admin or v.cargos && c.cargos_admin)
-      );
-$$;
-
 create or replace function public._e_dev()
 returns boolean
 language sql stable security definer
@@ -344,25 +398,99 @@ as $$
       or exists (select 1 from public.vendedores v where v.ativo and v.admin and v.discord_id = public._discord_id());
 $$;
 
--- Ações de impacto que o líder libera por cargo.
+-- Tudo o que um perfil pode liberar: páginas, abas do painel e ações.
 create or replace function public._permissoes_validas()
 returns text[]
 language sql immutable
-as $$ select array['encerrar_parceria', 'registrar_pagamento', 'cancelar_venda', 'gerenciar_vendedores', 'gerenciar_produtos'] $$;
+as $$ select array[
+  'ver_ranking', 'ver_calculadora', 'registrar_venda', 'ver_painel',
+  'ver_relatorio', 'ver_vendas', 'ver_usuarios', 'ver_parcerias', 'ver_produtos', 'ver_gestao',
+  'editar_parcerias', 'encerrar_parceria', 'registrar_pagamento', 'cancelar_venda', 'gerenciar_vendedores', 'gerenciar_produtos'] $$;
+
+-- Permissões do usuário logado: o líder tem todas; os outros, as do perfil do cadastro
+-- somadas às dos perfis ligados a cargos que a pessoa tem no Discord.
+create or replace function public._minhas_permissoes()
+returns text[]
+language sql stable security definer
+set search_path = public
+as $$
+  select case when public._e_lider() then public._permissoes_validas()
+  else coalesce((
+    select array_agg(distinct x)
+    from public.vendedores v
+    join public.perfis pf on pf.id = v.perfil_id or pf.cargos && v.cargos
+    cross join unnest(pf.permissoes) x
+    where v.ativo and v.discord_id = public._discord_id()
+  ), '{}') end;
+$$;
 
 create or replace function public.tem_permissao(p_permissao text)
 returns boolean
 language sql stable security definer
 set search_path = public
+as $$ select p_permissao = any (public._minhas_permissoes()); $$;
+
+-- Acesso ao painel (admin.html).
+create or replace function public.is_admin()
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$ select public.tem_permissao('ver_painel'); $$;
+
+-- Perfis: limpa o nome, aceita só permissões conhecidas e IDs de cargo válidos.
+create or replace function public._perfil_antes()
+returns trigger
+language plpgsql security definer
+set search_path = public
 as $$
-  select public.is_admin() and (
-    public._e_lider()
-    or exists (
-      select 1 from public.vendedores v, public.configuracoes c
-      where c.id = 1 and v.ativo and v.discord_id = public._discord_id()
-        and v.cargos && coalesce(array(select jsonb_array_elements_text(coalesce(c.permissoes -> p_permissao, '[]'::jsonb))), '{}')
-    ));
+begin
+  new.nome := regexp_replace(btrim(coalesce(new.nome, '')), '\s+', ' ', 'g');
+  new.permissoes := coalesce(array(select distinct x from unnest(coalesce(new.permissoes, '{}')) x
+                                   where x = any (public._permissoes_validas()) order by 1), '{}');
+  new.cargos := coalesce(array(select distinct x from unnest(coalesce(new.cargos, '{}')) x where x ~ '^\d{17,20}$' order by 1), '{}');
+  return new;
+end;
 $$;
+drop trigger if exists perfil_antes on public.perfis;
+create trigger perfil_antes before insert or update on public.perfis
+  for each row execute function public._perfil_antes();
+
+-- Migração (uma vez só): cria os perfis iniciais a partir do acesso por cargo e das permissões antigas.
+do $$
+declare
+  c public.configuracoes;
+  v_vendedor uuid;
+  v_cargo text;
+  v_perms text[];
+  v_nome text;
+begin
+  if exists (select 1 from public.perfis) then return; end if;
+  insert into public.perfis (nome, permissoes, ordem)
+  values ('Vendedor', array['ver_ranking', 'ver_calculadora', 'registrar_venda'], 10) returning id into v_vendedor;
+  insert into public.perfis (nome, permissoes, ordem) values ('Só calculadora (visualizar)', array['ver_calculadora'], 20);
+  insert into public.perfis (nome, permissoes, ordem) values ('Só parcerias (visualizar)', array['ver_painel', 'ver_parcerias'], 30);
+  select * into c from public.configuracoes where id = 1;
+  for v_cargo in
+    select distinct x from (
+      select unnest(coalesce(c.cargos_admin, '{}')) as x
+      union select jsonb_array_elements_text(e.value) from jsonb_each(coalesce(c.permissoes, '{}'::jsonb)) e
+    ) s where x ~ '^\d{17,20}$'
+  loop
+    v_perms := array['ver_ranking', 'ver_calculadora', 'registrar_venda'];
+    if v_cargo = any (coalesce(c.cargos_admin, '{}')) then
+      v_perms := v_perms || array['ver_painel', 'ver_relatorio', 'ver_vendas', 'ver_usuarios', 'ver_parcerias', 'ver_produtos', 'editar_parcerias'];
+    end if;
+    v_perms := v_perms || coalesce(array(select e.key from jsonb_each(coalesce(c.permissoes, '{}'::jsonb)) e where e.value ? v_cargo), '{}');
+    v_nome := btrim(coalesce((select nome from public.discord_cargos where id = v_cargo), ''));
+    if length(v_nome) < 2 then v_nome := 'Cargo ' || coalesce(nullif(v_nome, ''), right(v_cargo, 6)); end if;
+    v_nome := left(v_nome, 40);
+    if exists (select 1 from public.perfis where lower(nome) = lower(v_nome)) then
+      v_nome := left(v_nome, 32) || ' ' || right(v_cargo, 6);
+    end if;
+    insert into public.perfis (nome, permissoes, cargos, ordem) values (v_nome, v_perms, array[v_cargo], 100);
+  end loop;
+  update public.vendedores set perfil_id = v_vendedor where perfil_id is null;
+end $$;
 
 -- Produtos: categoria e materiais do craft reaproveitam a grafia já usada (ignorando maiúsculas),
 -- tiram espaços sobrando e juntam materiais repetidos.
@@ -442,28 +570,50 @@ grant select on public.parcerias to authenticated;
 grant insert, update, delete on public.produtos to authenticated;
 -- Ativar/encerrar só pelas funções encerrar_parceria / reativar_parceria (que exigem motivo e registram histórico).
 grant insert (nome, responsavel, observacoes, produtos, localizacao, img_localizacao, img_banner, img_cores, feita_por_id, feita_por_nome),
-  update (nome, responsavel, observacoes, produtos, localizacao, img_localizacao, img_banner, img_cores, feita_por_id, feita_por_nome),
-  delete on public.parcerias to authenticated;
+  update (nome, responsavel, observacoes, produtos, localizacao, img_localizacao, img_banner, img_cores, feita_por_id, feita_por_nome)
+  on public.parcerias to authenticated;
+revoke delete on public.parcerias from authenticated;
 
 alter table public.parceria_historico enable row level security;
 revoke all on public.parceria_historico from anon, authenticated;
 grant select on public.parceria_historico to authenticated;
 drop policy if exists parceria_historico_admin on public.parceria_historico;
 create policy parceria_historico_admin on public.parceria_historico for select to authenticated
-  using (public.is_admin());
+  using (public.tem_permissao('ver_parcerias'));
 
 drop policy if exists parcerias_imagens_ler on storage.objects;
 create policy parcerias_imagens_ler on storage.objects for select to authenticated
   using (bucket_id = 'parcerias' and public.is_admin());
 drop policy if exists parcerias_imagens_enviar on storage.objects;
 create policy parcerias_imagens_enviar on storage.objects for insert to authenticated
-  with check (bucket_id = 'parcerias' and public.is_admin());
+  with check (bucket_id = 'parcerias' and public.tem_permissao('editar_parcerias'));
 drop policy if exists parcerias_imagens_alterar on storage.objects;
 create policy parcerias_imagens_alterar on storage.objects for update to authenticated
-  using (bucket_id = 'parcerias' and public.is_admin()) with check (bucket_id = 'parcerias' and public.is_admin());
+  using (bucket_id = 'parcerias' and public.tem_permissao('editar_parcerias'))
+  with check (bucket_id = 'parcerias' and public.tem_permissao('editar_parcerias'));
 drop policy if exists parcerias_imagens_apagar on storage.objects;
 create policy parcerias_imagens_apagar on storage.objects for delete to authenticated
-  using (bucket_id = 'parcerias' and public.is_admin());
+  using (bucket_id = 'parcerias' and public.tem_permissao('editar_parcerias'));
+
+-- Perfis: quem acessa o painel lê (para o cadastro de usuários); só o líder cria, altera e apaga.
+alter table public.perfis enable row level security;
+revoke all on public.perfis from anon, authenticated;
+grant select, insert, update, delete on public.perfis to authenticated;
+drop policy if exists perfis_leitura on public.perfis;
+create policy perfis_leitura on public.perfis for select to authenticated using (public.is_admin());
+drop policy if exists perfis_lider on public.perfis;
+create policy perfis_lider on public.perfis for all to authenticated
+  using (public._e_lider()) with check (public._e_lider());
+
+-- Novidades, fóruns e estado do Discord: só pelas funções.
+alter table public.novidades enable row level security;
+revoke all on public.novidades from anon, authenticated;
+alter table public.discord_foruns enable row level security;
+revoke all on public.discord_foruns from anon, authenticated;
+alter table public.discord_posts enable row level security;
+revoke all on public.discord_posts from anon, authenticated;
+alter table public.discord_estado enable row level security;
+revoke all on public.discord_estado from anon, authenticated;
 
 drop policy if exists produtos_leitura on public.produtos;
 create policy produtos_leitura on public.produtos for select
@@ -476,11 +626,15 @@ drop policy if exists parcerias_leitura on public.parcerias;
 create policy parcerias_leitura on public.parcerias for select
   using (ativo or public.is_admin());
 drop policy if exists parcerias_admin on public.parcerias;
-create policy parcerias_admin on public.parcerias for all to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+drop policy if exists parcerias_editar on public.parcerias;
+create policy parcerias_editar on public.parcerias for insert to authenticated
+  with check (public.tem_permissao('editar_parcerias'));
+drop policy if exists parcerias_alterar on public.parcerias;
+create policy parcerias_alterar on public.parcerias for update to authenticated
+  using (public.tem_permissao('editar_parcerias')) with check (public.tem_permissao('editar_parcerias'));
 
--- Vendedores: só o admin lê. Criação/edição via RPC salvar_vendedor.
-grant select (id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em, cargos, avatar) on public.vendedores to authenticated;
+-- Usuários: só quem acessa o painel lê. Criação/edição via RPC salvar_vendedor.
+grant select (id, nome, discord_id, admin, ativo, criado_em, nome_discord, no_servidor, nome_discord_em, cargos, avatar, id_pagamento, perfil_id) on public.vendedores to authenticated;
 alter table public.discord_pedidos enable row level security;
 revoke all on public.discord_pedidos from anon, authenticated;
 alter table public.discord_cargos enable row level security;
@@ -498,19 +652,19 @@ create policy vendedores_admin on public.vendedores for select to authenticated
 grant select on public.vendas, public.venda_itens to authenticated;
 drop policy if exists vendas_admin_leitura on public.vendas;
 create policy vendas_admin_leitura on public.vendas for select to authenticated
-  using (public.is_admin());
+  using (public.tem_permissao('ver_vendas'));
 drop policy if exists vendas_admin_update on public.vendas;
 drop policy if exists venda_itens_admin on public.venda_itens;
 create policy venda_itens_admin on public.venda_itens for select to authenticated
-  using (public.is_admin());
+  using (public.tem_permissao('ver_vendas'));
 
--- Pagamentos: só o admin lê. Registro somente pela função registrar_pagamento.
+-- Pagamentos: quem vê o relatório lê. Registro somente pela função registrar_pagamento.
 alter table public.pagamentos enable row level security;
 revoke all on public.pagamentos from anon, authenticated;
 grant select on public.pagamentos to authenticated;
 drop policy if exists pagamentos_admin on public.pagamentos;
 create policy pagamentos_admin on public.pagamentos for select to authenticated
-  using (public.is_admin());
+  using (public.tem_permissao('ver_relatorio'));
 
 -- Configurações: os admins leem; só o líder altera (Discord, cargos de acesso e permissões).
 grant select, update on public.configuracoes to authenticated;
@@ -539,6 +693,30 @@ begin
        or new.percentual_comissao is distinct from old.percentual_comissao)
      and not public._e_lider() then
     raise exception 'Só o líder pode alterar a gestão de acessos e permissões.';
+  end if;
+
+  -- Troca de servidor: cargos, fóruns e posts eram do servidor antigo.
+  if new.discord_servidor_id is distinct from old.discord_servidor_id then
+    delete from public.discord_cargos where true;
+    delete from public.discord_foruns where true;
+    delete from public.discord_posts where true;
+    delete from public.discord_estado where true;
+    delete from public.discord_pedidos where true;
+    update public.vendedores set cargos = '{}', nome_discord_em = null where true;
+    if new.discord_categoria_parceiros is not distinct from old.discord_categoria_parceiros then
+      new.discord_categoria_parceiros := null;
+    end if;
+  end if;
+  -- Trocou a categoria do fórum: os fóruns e posts antigos ficam para trás.
+  if new.discord_categoria_parceiros is distinct from old.discord_categoria_parceiros then
+    delete from public.discord_foruns where true;
+    delete from public.discord_posts where true;
+    delete from public.discord_estado where true;
+  end if;
+
+  -- Novo dia/horário do relatório: se ainda não passou nesta semana, envia nesta semana.
+  if new.relatorio_dia is distinct from old.relatorio_dia or new.relatorio_hora is distinct from old.relatorio_hora then
+    new.relatorio_ultima_semana := public._semana_do_relatorio(new.relatorio_dia, new.relatorio_hora);
   end if;
   return new;
 end;
@@ -570,6 +748,41 @@ create or replace function public._inicio_semana(p_data date)
 returns date
 language sql immutable
 as $$ select date_trunc('week', p_data)::date; $$;
+
+-- Semana a marcar como "já enviada" para um dia/horário: a atual se o horário desta semana já passou.
+create or replace function public._semana_do_relatorio(p_dia int, p_hora time)
+returns date
+language sql stable
+as $$
+  select case when (public._inicio_semana((now() at time zone 'America/Sao_Paulo')::date) + (p_dia - 1)) + p_hora
+                   <= (now() at time zone 'America/Sao_Paulo')
+              then public._inicio_semana((now() at time zone 'America/Sao_Paulo')::date) end;
+$$;
+update public.configuracoes set relatorio_ultima_semana = public._semana_do_relatorio(relatorio_dia, relatorio_hora)
+where id = 1 and relatorio_ultima_semana is null;
+
+-- Endereço completo de uma imagem do site para o Discord (que não mostra SVG: usa o PNG de mesmo nome).
+create or replace function public._url_imagem(p_imagem text)
+returns text
+language sql stable
+as $$
+  select case
+    when coalesce(btrim(p_imagem), '') = '' then null
+    when p_imagem ~ '^https://' then p_imagem
+    else rtrim((select site_url from public.configuracoes where id = 1), '/') || '/'
+         || regexp_replace(regexp_replace(p_imagem, '^(\./|/)+', ''), '\.svg$', '.png')
+  end;
+$$;
+
+-- Nome de produto normalizado (sem acento, minúsculo, hífens) para agrupar os fóruns.
+create or replace function public._chave_produto(p_nome text)
+returns text
+language sql immutable
+as $$
+  select trim(both '-' from regexp_replace(lower(translate(coalesce(p_nome, ''),
+    'ÁÀÂÃÄáàâãäÉÈÊËéèêëÍÌÎÏíìîïÓÒÔÕÖóòôõöÚÙÛÜúùûüÇçÑñ',
+    'AAAAAaaaaaEEEEeeeeIIIIiiiiOOOOOoooooUUUUuuuuCcNn')), '[^a-z0-9]+', '-', 'g'));
+$$;
 
 -- Vendedor logado; erro NAO_CADASTRADO se o Discord dele não estiver cadastrado.
 create or replace function public._exigir_vendedor()
@@ -606,10 +819,106 @@ as $$
     'admin_manual', coalesce(v.admin, false),
     'lider', public._e_lider(),
     'dev', public._e_dev(),
-    'permissoes', (select coalesce(jsonb_object_agg(p, public.tem_permissao(p)), '{}'::jsonb) from unnest(public._permissoes_validas()) p)
+    'perfil', (select nome from public.perfis where id = v.perfil_id),
+    'permissoes', (select coalesce(jsonb_object_agg(p, p = any (m.lista)), '{}'::jsonb)
+                   from unnest(public._permissoes_validas()) p, (select public._minhas_permissoes() as lista) m)
   )
   from (select (public._vendedor_atual()).*) v;
 $$;
+
+-- Novidades (preços, produtos e parcerias) desde a última vez que o usuário viu.
+-- p_todas: as últimas 30 dos últimos 30 dias, marcando quais são novas.
+create or replace function public.minhas_novidades(p_todas boolean default false)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  v public.vendedores := public._vendedor_atual();
+  v_desde timestamptz;
+begin
+  if v.id is null then return jsonb_build_object('novas', 0, 'itens', '[]'::jsonb); end if;
+  v_desde := coalesce(v.novidades_vistas_em, greatest(v.criado_em, now() - interval '7 days'));
+  return jsonb_build_object(
+    'novas', (select count(*) from public.novidades where criado_em > v_desde),
+    'itens', coalesce((
+      select jsonb_agg(jsonb_build_object('tipo', n.tipo, 'titulo', n.titulo, 'descricao', n.descricao,
+                                          'criado_em', n.criado_em, 'nova', n.criado_em > v_desde) order by n.criado_em desc, n.id desc)
+      from (select * from public.novidades
+            where criado_em > case when p_todas then now() - interval '30 days' else v_desde end
+            order by criado_em desc, id desc limit 30) n), '[]'::jsonb));
+end;
+$$;
+
+create or replace function public.marcar_novidades_vistas()
+returns void
+language sql volatile security definer
+set search_path = public
+as $$
+  update public.vendedores set novidades_vistas_em = now() where id = (public._vendedor_atual()).id;
+$$;
+
+create or replace function public._novidade(p_tipo text, p_titulo text, p_descricao text)
+returns void
+language sql volatile security definer
+set search_path = public
+as $$
+  insert into public.novidades (tipo, titulo, descricao) values (p_tipo, left(p_titulo, 120), left(p_descricao, 500));
+$$;
+
+-- Avisos automáticos quando um produto ou preço muda pelo site (migrações e jobs do banco não avisam).
+create or replace function public._produto_novidade()
+returns trigger
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  v_mudou text[] := '{}';
+begin
+  if auth.uid() is null then return null; end if;
+  if tg_op = 'INSERT' then
+    if new.ativo then
+      perform public._novidade('produto', 'Novo produto: ' || new.nome,
+        'Pista ' || public._formatar_valor(new.preco_sem_parceria) || ' · Parceria ' || public._formatar_valor(new.preco_com_parceria));
+    end if;
+    return null;
+  end if;
+  if tg_op = 'DELETE' then
+    if old.ativo then perform public._novidade('produto', 'Produto removido: ' || old.nome, null); end if;
+    return null;
+  end if;
+  if old.ativo and not new.ativo then
+    perform public._novidade('produto', 'Produto retirado da calculadora: ' || new.nome, null);
+    return null;
+  end if;
+  if new.ativo and not old.ativo then
+    perform public._novidade('produto', 'Produto de volta: ' || new.nome,
+      'Pista ' || public._formatar_valor(new.preco_sem_parceria) || ' · Parceria ' || public._formatar_valor(new.preco_com_parceria));
+    return null;
+  end if;
+  if not new.ativo then return null; end if;
+  if new.preco_sem_parceria is distinct from old.preco_sem_parceria or new.preco_com_parceria is distinct from old.preco_com_parceria then
+    perform public._novidade('preco', 'Preço atualizado: ' || new.nome,
+      concat_ws(' · ',
+        case when new.preco_sem_parceria is distinct from old.preco_sem_parceria
+          then 'Pista ' || public._formatar_valor(old.preco_sem_parceria) || ' → ' || public._formatar_valor(new.preco_sem_parceria) end,
+        case when new.preco_com_parceria is distinct from old.preco_com_parceria
+          then 'Parceria ' || public._formatar_valor(old.preco_com_parceria) || ' → ' || public._formatar_valor(new.preco_com_parceria) end));
+  end if;
+  if new.nome is distinct from old.nome then v_mudou := v_mudou || ('nome (antes: ' || old.nome || ')'); end if;
+  if new.serve_para is distinct from old.serve_para then v_mudou := v_mudou || 'descrição'::text; end if;
+  if new.craft is distinct from old.craft then v_mudou := v_mudou || 'craft'::text; end if;
+  if new.categoria is distinct from old.categoria then v_mudou := v_mudou || ('categoria: ' || new.categoria); end if;
+  if new.imagem is distinct from old.imagem or new.icone is distinct from old.icone then v_mudou := v_mudou || 'imagem'::text; end if;
+  if array_length(v_mudou, 1) > 0 then
+    perform public._novidade('produto', 'Produto atualizado: ' || new.nome, 'Alterado: ' || array_to_string(v_mudou, ', ') || '.');
+  end if;
+  return null;
+end;
+$$;
+drop trigger if exists produto_novidade on public.produtos;
+create trigger produto_novidade after insert or update or delete on public.produtos
+  for each row execute function public._produto_novidade();
 
 -- Monta e envia (de forma assíncrona) o aviso de venda para o Discord.
 create or replace function public._notificar_venda(p_venda_id uuid)
@@ -639,15 +948,13 @@ begin
     from public.venda_itens where venda_id = v.id;
 
   v_campos := jsonb_build_array(
-    jsonb_build_object('name', 'Vendedor', 'value', v.vendedor_nome, 'inline', true),
-    jsonb_build_object('name', 'Tipo de venda', 'value',
-      case when v.com_parceria then 'Com parceria' else 'Pista' end, 'inline', true)
+    jsonb_build_object('name', '👤 Vendedor', 'value', v.vendedor_nome, 'inline', true),
+    jsonb_build_object('name', '🏷️ Tipo de venda', 'value',
+      case when v.com_parceria then '🤝 Parceria' else '🛣️ Pista' end, 'inline', true)
   );
-  if v.com_parceria then
-    v_campos := v_campos || jsonb_build_object('name', 'Parceria', 'value', coalesce(v.parceria_nome, '—'), 'inline', true);
-  end if;
-  if coalesce(v.cliente, '') <> '' then
-    v_campos := v_campos || jsonb_build_object('name', 'Cliente', 'value', v.cliente, 'inline', true);
+  if coalesce(v.cliente, v.parceria_nome, '') <> '' then
+    v_campos := v_campos || jsonb_build_object('name', case when v.com_parceria then '🤝 Cliente (parceiro)' else '🧍 Cliente' end,
+      'value', coalesce(v.cliente, v.parceria_nome), 'inline', true);
   end if;
   v_campos := v_campos || jsonb_build_array(
     jsonb_build_object('name', 'Itens', 'value', left(coalesce(v_itens, '—'), 1024)),
@@ -661,13 +968,17 @@ begin
   v_corpo := jsonb_build_object(
     'username', c.nome_organizacao || ' — Vendas',
     'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb),
-    'embeds', jsonb_build_array(jsonb_build_object(
+    'embeds', jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
       'title', '🐉 Venda #' || v.numero,
-      'color', 2001125,
+      'color', case when v.com_parceria then 3447003 else 2001125 end,
       'fields', v_campos,
-      'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao),
+      -- imagem do item de maior valor da venda
+      'thumbnail', (select jsonb_build_object('url', public._url_imagem(pr.imagem))
+                    from public.venda_itens i join public.produtos pr on pr.id = i.produto_id
+                    where i.venda_id = v.id and pr.imagem is not null order by i.subtotal desc limit 1),
+      'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao, 'icon_url', public._url_imagem('img/logo.png')),
       'timestamp', to_char(v.criado_em at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-    ))
+    )))
   );
 
   -- Marca o vendedor (em spoiler, discreto) se ele tiver ID do Discord.
@@ -712,6 +1023,9 @@ declare
   v_esperados int;
 begin
   v_vendedor := public._exigir_vendedor();
+  if not public.tem_permissao('registrar_venda') then
+    raise exception 'Seu perfil não registra vendas (só visualiza a calculadora).';
+  end if;
 
   if v_com then
     select * into v_parceria from public.parcerias where id = p_parceria_id and ativo;
@@ -751,8 +1065,9 @@ begin
   end if;
 
   insert into public.vendas (vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao)
+  -- Na parceria, o cliente é o próprio parceiro; na pista, o cliente é opcional.
   values (v_vendedor.id, coalesce(v_vendedor.nome_discord, v_vendedor.nome), v_parceria.id, v_parceria.nome, v_com,
-          nullif(left(trim(coalesce(p_cliente, '')), 60), ''),
+          case when v_com then v_parceria.nome else nullif(left(trim(coalesce(p_cliente, '')), 60), '') end,
           v_total, v_comissao,
           nullif(left(trim(coalesce(p_observacao, '')), 300), ''))
   returning id, numero into v_id, v_numero;
@@ -785,6 +1100,9 @@ declare
 begin
   if v_eu is null and not public.is_admin() then
     raise exception 'NAO_CADASTRADO' using hint = 'Peça a um administrador para cadastrar seu ID do Discord.';
+  end if;
+  if not public.tem_permissao('ver_ranking') then
+    raise exception 'Seu perfil não tem acesso ao ranking.';
   end if;
   return coalesce((
     select jsonb_agg(x order by x.posicao, x.nome)
@@ -830,12 +1148,15 @@ $$;
 -- Painel administrativo (papel authenticated + admin)
 -- -----------------------------------------------------------------------------
 
+drop function if exists public.salvar_vendedor(uuid, text, text, boolean, boolean);
 create or replace function public.salvar_vendedor(
   p_id uuid,
   p_nome text,
   p_discord_id text,
   p_ativo boolean,
-  p_admin boolean
+  p_admin boolean,
+  p_perfil_id uuid default null,
+  p_id_pagamento text default null
 )
 returns uuid
 language plpgsql volatile security definer
@@ -844,48 +1165,65 @@ as $$
 declare
   v_id uuid;
   v_discord text := trim(coalesce(p_discord_id, ''));
-  v_proprio boolean;
-  v_admin_atual boolean;
+  v_pag text := nullif(btrim(coalesce(p_id_pagamento, '')), '');
+  v_atual public.vendedores;
+  v_proprio boolean := false;
+  v_perms_perfil text[];
 begin
   if not public.tem_permissao('gerenciar_vendedores') then
-    raise exception 'Você não tem permissão para gerenciar vendedores.';
+    raise exception 'Você não tem permissão para gerenciar usuários.';
+  end if;
+  if p_id is not null then
+    select * into v_atual from public.vendedores where id = p_id;
+    if v_atual.id is null then raise exception 'Usuário não encontrado.'; end if;
+    v_proprio := v_atual.discord_id = public._discord_id();
   end if;
   -- Administrador manual = líder: só um líder pode dar ou tirar.
-  select admin into v_admin_atual from public.vendedores where id = p_id;
-  if coalesce(p_admin, false) is distinct from coalesce(v_admin_atual, false) and not public._e_lider() then
+  if coalesce(p_admin, false) is distinct from coalesce(v_atual.admin, false) and not public._e_lider() then
     raise exception 'Só o líder pode marcar ou desmarcar administrador manual.';
   end if;
   if v_discord !~ '^\d{17,20}$' then
     raise exception 'ID do Discord inválido: deve ter de 17 a 20 números.';
   end if;
+  if length(v_pag) > 40 then
+    raise exception 'O ID para pagamento pode ter no máximo 40 caracteres.';
+  end if;
   if exists (select 1 from public.vendedores where discord_id = v_discord and id is distinct from p_id) then
     raise exception 'Já existe um cadastro com este ID do Discord.';
   end if;
+  if p_perfil_id is not null and not exists (select 1 from public.perfis where id = p_perfil_id) then
+    raise exception 'Perfil não encontrado.';
+  end if;
+  -- Perfil: quem não é líder não muda o próprio perfil e só dá perfis com permissões que ele mesmo tem.
+  if p_perfil_id is distinct from v_atual.perfil_id and not public._e_lider() then
+    if v_proprio then
+      raise exception 'Você não pode mudar o seu próprio perfil.';
+    end if;
+    select permissoes into v_perms_perfil from public.perfis where id = p_perfil_id;
+    if not (coalesce(v_perms_perfil, '{}') <@ public._minhas_permissoes()) then
+      raise exception 'Este perfil tem permissões que você não tem. Peça ao líder.';
+    end if;
+  end if;
 
   if p_id is null then
-    insert into public.vendedores (nome, discord_id, ativo, admin)
-    values (trim(p_nome), v_discord, coalesce(p_ativo, true), coalesce(p_admin, false))
+    insert into public.vendedores (nome, discord_id, ativo, admin, perfil_id, id_pagamento)
+    values (trim(p_nome), v_discord, coalesce(p_ativo, true), coalesce(p_admin, false), p_perfil_id, v_pag)
     returning id into v_id;
   else
-    -- Ninguém tira o próprio acesso ao painel (evita ficar sem nenhum admin).
-    -- (tirar o "Administrador" manual só é permitido se o cargo do servidor já der acesso).
-    select discord_id = public._discord_id() into v_proprio from public.vendedores where id = p_id;
+    -- Ninguém tira o próprio acesso (evita o painel ficar sem líder).
     if v_proprio and (p_ativo is false or v_discord <> public._discord_id()
-        or (p_admin is false and not exists (
-              select 1 from public.vendedores ve, public.configuracoes c
-              where ve.id = p_id and c.id = 1 and ve.cargos && c.cargos_admin))) then
-      raise exception 'Você não pode remover o seu próprio acesso de administrador.';
+        or (v_atual.admin and p_admin is false and not public._e_dev())) then
+      raise exception 'Você não pode remover o seu próprio acesso.';
     end if;
     update public.vendedores
        set nome = trim(p_nome),
            discord_id = v_discord,
            ativo = coalesce(p_ativo, ativo),
-           admin = coalesce(p_admin, admin)
+           admin = coalesce(p_admin, admin),
+           perfil_id = p_perfil_id,
+           id_pagamento = v_pag
      where id = p_id
      returning id into v_id;
-    if v_id is null then
-      raise exception 'Vendedor não encontrado.';
-    end if;
   end if;
   return v_id;
 end;
@@ -995,7 +1333,19 @@ begin
   if tg_op = 'INSERT' then
     insert into public.parceria_historico (parceria_id, tipo, descricao, autor)
     values (new.id, 'criada', 'Parceria cadastrada' || coalesce(' por ' || new.feita_por_nome, '') || '.', public._nome_logado());
+    if new.ativo then
+      perform public._novidade('parceria', 'Nova parceria: ' || new.nome,
+        case when cardinality(new.produtos) > 0 then 'Vende: ' || array_to_string(new.produtos, ', ') end);
+    end if;
     return new;
+  end if;
+  if new.ativo is distinct from old.ativo then
+    perform public._novidade('parceria', case when new.ativo then 'Parceria reativada: ' else 'Parceria encerrada: ' end || new.nome, null);
+  elsif new.ativo and (new.nome is distinct from old.nome or new.produtos is distinct from old.produtos) then
+    perform public._novidade('parceria', 'Parceria atualizada: ' || new.nome,
+      concat_ws(' · ',
+        case when new.nome is distinct from old.nome then 'antes: ' || old.nome end,
+        case when new.produtos is distinct from old.produtos then 'Vende: ' || coalesce(nullif(array_to_string(new.produtos, ', '), ''), '—') end));
   end if;
   if new.nome is distinct from old.nome then v_mudou := v_mudou || ('nome: ' || old.nome || ' → ' || new.nome); end if;
   if new.responsavel is distinct from old.responsavel then v_mudou := v_mudou || 'responsável'::text; end if;
@@ -1066,7 +1416,7 @@ as $$
 declare
   r jsonb;
 begin
-  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  if not public.tem_permissao('ver_parcerias') then raise exception 'Acesso negado.'; end if;
   if not exists (select 1 from public.parcerias where id = p_id) then raise exception 'Parceria não encontrada.'; end if;
   select jsonb_build_object(
     'total', coalesce(sum(v.total), 0),
@@ -1138,6 +1488,7 @@ as $$
                pg.pago_em, pg.pago_por
         from (
           select v.vendedor_id, coalesce(max(vd.nome_discord), max(vd.nome), max(v.vendedor_nome)) as nome,
+                 max(vd.avatar) as avatar, max(vd.id_pagamento) as id_pagamento, max(vd.discord_id) as discord_id,
                  count(*) as quantidade, sum(v.total) as total, sum(v.comissao) as comissao
           from v left join public.vendedores vd on vd.id = v.vendedor_id
           group by v.vendedor_id
@@ -1178,23 +1529,202 @@ language plpgsql stable security definer
 set search_path = public
 as $$
 begin
-  if not public.is_admin() then
+  if not public.tem_permissao('ver_relatorio') then
     raise exception 'Acesso negado.';
   end if;
   return public._relatorio(p_inicio, p_fim);
 end;
 $$;
 
-create or replace function public._linhas_relatorio(p_lista jsonb, p_com_icone boolean default false)
-returns text
-language sql stable
+-- Total vendido por parceria no período (coluna "Semana" da aba Parcerias).
+create or replace function public.vendas_por_parceria(p_inicio date, p_fim date)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
 as $$
-  select coalesce(left(string_agg(
-           (case when p_com_icone and e->>'icone' is not null then e->>'icone' || ' ' else '' end)
-           || '**' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'total')::numeric)
-           || ' (' || (e->>'quantidade') || ')', E'\n' order by ord), 1024), '—')
-  from jsonb_array_elements(p_lista) with ordinality as t (e, ord)
-  where ord <= 15;
+begin
+  if not public.tem_permissao('ver_parcerias') then
+    raise exception 'Acesso negado.';
+  end if;
+  return coalesce((
+    select jsonb_agg(jsonb_build_object('parceria_id', parceria_id, 'quantidade', qtd, 'total', total))
+    from (select parceria_id, count(*) as qtd, sum(total) as total from public.vendas
+          where not cancelada and parceria_id is not null
+            and criado_em >= (p_inicio::timestamp at time zone 'America/Sao_Paulo')
+            and criado_em < ((p_fim + 1)::timestamp at time zone 'America/Sao_Paulo')
+          group by parceria_id) x), '[]'::jsonb);
+end;
+$$;
+
+drop function if exists public._linhas_relatorio(jsonb, boolean);
+
+-- Peças do visual do relatório no Discord.
+create or replace function public._campo(p_nome text, p_valor text, p_inline boolean default true)
+returns jsonb
+language sql immutable
+as $$ select jsonb_build_object('name', left(p_nome, 256), 'value', left(coalesce(nullif(p_valor, ''), '—'), 1024), 'inline', p_inline); $$;
+
+create or replace function public._barra(p_valor numeric, p_max numeric)
+returns text
+language sql immutable
+as $$
+  select repeat('▰', n) || repeat('▱', 10 - n)
+  from (select least(10, greatest(1, coalesce(round(10 * coalesce(p_valor, 0) / nullif(p_max, 0))::int, 1))) as n) x;
+$$;
+
+create or replace function public._medalha(p_pos bigint)
+returns text
+language sql immutable
+as $$ select case p_pos when 1 then '🥇' when 2 then '🥈' when 3 then '🥉' else '`' || p_pos || 'º`' end; $$;
+
+-- Monta a mensagem do relatório (vários embeds, com logo, fotos e imagens dos produtos).
+-- r: resultado de _relatorio (+ total_anterior, opcional).
+create or replace function public._corpo_relatorio(r jsonb, p_simulado boolean default false)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  c public.configuracoes;
+  v_ini date := (r->>'inicio')::date;
+  v_fim date := (r->>'fim')::date;
+  v_logo text := public._url_imagem('img/logo.png');
+  v_embeds jsonb := '[]'::jsonb;
+  v_qtd numeric := coalesce((r->>'quantidade')::numeric, 0);
+  v_total numeric := coalesce((r->>'total')::numeric, 0);
+  v_anterior numeric := (r->>'total_anterior')::numeric;
+  v_itens numeric;
+  v_txt text;
+  v_max numeric;
+  v_pagos int;
+  v_com int;
+  v_pend numeric;
+  v_var text := '';
+  x jsonb;
+  v_ord bigint;
+begin
+  select * into c from public.configuracoes where id = 1;
+  select coalesce(sum((e->>'quantidade')::numeric), 0) into v_itens from jsonb_array_elements(coalesce(r->'por_produto', '[]')) e;
+  if v_anterior is not null and v_anterior > 0 then
+    v_var := E'\n' || case when v_total >= v_anterior then '📈 **+' else '📉 **' end
+             || round((v_total - v_anterior) / v_anterior * 100) || '%** em relação à semana anterior ('
+             || public._formatar_valor(v_anterior) || ')';
+  end if;
+
+  -- 1. Resumo
+  v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
+    'author', jsonb_build_object('name', c.nome_organizacao || ' · Relatório da semana', 'icon_url', v_logo),
+    'title', '📊 Relatório semanal' || case when p_simulado then ' — simulação' else '' end,
+    'description', '🗓️ Semana de **' || to_char(v_ini, 'DD/MM') || '** a **' || to_char(v_fim, 'DD/MM/YYYY') || '**' || v_var,
+    'color', 2001125,
+    'thumbnail', jsonb_build_object('url', v_logo),
+    'fields', jsonb_build_array(
+      public._campo('💰 Total vendido', '**' || public._formatar_valor(v_total) || '**'),
+      public._campo('🧾 Vendas', v_qtd::text),
+      public._campo('📦 Itens vendidos', replace(to_char(v_itens, 'FM999G999G990'), ',', '.')),
+      public._campo('🤝 Com parceria', public._formatar_valor((r->>'total_com_parceria')::numeric)),
+      public._campo('🛣️ Pista', public._formatar_valor((r->>'total_sem_parceria')::numeric)),
+      public._campo('🎯 Ticket médio', public._formatar_valor(case when v_qtd > 0 then v_total / v_qtd else 0 end)),
+      public._campo('💸 Comissões (' || round(coalesce((r->>'percentual_comissao')::numeric, 0) * 100) || '%)',
+                    public._formatar_valor((r->>'comissao')::numeric)))
+  ));
+
+  if jsonb_array_length(coalesce(r->'por_vendedor', '[]')) = 0 then
+    v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
+      'description', '😴 Nenhuma venda registrada nesta semana.', 'color', 9807270));
+  else
+    -- 2. Ranking de vendedores
+    select max((e->>'total')::numeric) into v_max from jsonb_array_elements(r->'por_vendedor') e;
+    select string_agg(public._medalha(ord) || ' **' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'total')::numeric)
+                      || E'\n' || '`' || public._barra((e->>'total')::numeric, v_max) || '` ' || (e->>'quantidade')
+                      || ' venda' || case when (e->>'quantidade')::int = 1 then '' else 's' end, E'\n' order by ord)
+      into v_txt
+      from jsonb_array_elements(r->'por_vendedor') with ordinality t (e, ord) where ord <= 10;
+    v_embeds := v_embeds || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
+      'title', '🏆 Ranking de vendedores',
+      'description', left(v_txt, 1500),
+      'color', 15844367,
+      'thumbnail', case when coalesce(r->'por_vendedor'->0->>'avatar', '') ~ '^https://' then jsonb_build_object('url', r->'por_vendedor'->0->>'avatar') end)));
+
+    -- 3. Pagamento das comissões (com o ID para pagamento)
+    select count(*) filter (where (e->>'pendente')::numeric <= 0), count(*), coalesce(sum((e->>'pendente')::numeric), 0)
+      into v_pagos, v_com, v_pend
+      from jsonb_array_elements(r->'por_vendedor') e where (e->>'comissao')::numeric > 0;
+    if v_com > 0 then
+      select string_agg(case when (e->>'pendente')::numeric <= 0 then '✅' else '⏳' end
+                        || ' **' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'comissao')::numeric)
+                        || coalesce(' · ID `' || nullif(e->>'id_pagamento', '') || '`', '')
+                        || case when (e->>'pendente')::numeric > 0 and coalesce((e->>'pago')::numeric, 0) > 0
+                                then ' · falta ' || public._formatar_valor((e->>'pendente')::numeric) else '' end,
+                        E'\n' order by ord)
+        into v_txt
+        from jsonb_array_elements(r->'por_vendedor') with ordinality t (e, ord)
+        where (e->>'comissao')::numeric > 0 and ord <= 15;
+      v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
+        'title', '💸 Pagamento das comissões',
+        'description', left(v_txt, 1500),
+        'color', case when v_pend <= 0 then 3066993 else 15105570 end,
+        'footer', jsonb_build_object('text', v_pagos || ' de ' || v_com || ' pago' || case when v_com = 1 then '' else 's' end
+                  || case when v_pend > 0 then ' · falta pagar ' || public._formatar_valor(v_pend) else ' · tudo pago ✔' end)));
+    end if;
+
+    -- 4. Parcerias
+    select max((e->>'total')::numeric) into v_max from jsonb_array_elements(r->'por_parceria') e;
+    select string_agg(case when e->>'nome' like 'Pista%' then '🛣️' else '🤝' end || ' **' || (e->>'nome') || '** — '
+                      || public._formatar_valor((e->>'total')::numeric) || ' · ' || (e->>'quantidade') || ' venda'
+                      || case when (e->>'quantidade')::int = 1 then '' else 's' end
+                      || E'\n' || '`' || public._barra((e->>'total')::numeric, v_max) || '`', E'\n' order by ord)
+      into v_txt
+      from jsonb_array_elements(r->'por_parceria') with ordinality t (e, ord) where ord <= 10;
+    v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
+      'title', '🤝 Vendas por parceria', 'description', left(coalesce(v_txt, '—'), 1200), 'color', 3447003));
+
+    -- 5. Os 3 produtos mais vendidos, cada um com a imagem do site
+    for x, v_ord in select e, ord from jsonb_array_elements(r->'por_produto') with ordinality t (e, ord) where ord <= 3 loop
+      v_embeds := v_embeds || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
+        'title', public._medalha(v_ord) || ' ' || coalesce((x->>'icone') || ' ', '') || (x->>'nome'),
+        'description', '**' || replace(to_char((x->>'quantidade')::numeric, 'FM999G999G990'), ',', '.') || '** unidades · **'
+                       || public._formatar_valor((x->>'total')::numeric) || '**'
+                       || coalesce(E'\n🔧 ' || (select string_agg((m->>'quantidade') || ' ' || (m->>'nome'), ' · ')
+                                                 from jsonb_array_elements(coalesce(x->'craft', '[]')) m), ''),
+        'color', 10181046,
+        'thumbnail', case when public._url_imagem(x->>'imagem') is not null then jsonb_build_object('url', public._url_imagem(x->>'imagem')) end)));
+    end loop;
+
+    -- 6. Demais produtos
+    select string_agg(coalesce((e->>'icone') || ' ', '') || '**' || (e->>'nome') || '** ×' || (e->>'quantidade')
+                      || ' — ' || public._formatar_valor((e->>'total')::numeric), E'\n' order by ord)
+      into v_txt
+      from jsonb_array_elements(r->'por_produto') with ordinality t (e, ord) where ord between 4 and 15;
+    if v_txt is not null then
+      v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
+        'title', '📦 Demais produtos', 'description', left(v_txt, 1000), 'color', 10181046));
+    end if;
+
+    -- 7. Craft usado
+    if jsonb_array_length(coalesce(r->'craft', '[]')) > 0 then
+      v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
+        'title', '🔧 Materiais de craft usados',
+        'color', 9807270,
+        'fields', (select jsonb_agg(public._campo(e->>'nome', '**' || replace(to_char((e->>'quantidade')::numeric, 'FM999G999G990'), ',', '.') || '**') order by ord)
+                   from jsonb_array_elements(r->'craft') with ordinality t (e, ord) where ord <= 12)));
+    end if;
+  end if;
+
+  -- Rodapé e horário no último embed.
+  v_embeds := jsonb_set(v_embeds, array[(jsonb_array_length(v_embeds) - 1)::text],
+    v_embeds->(jsonb_array_length(v_embeds) - 1) || jsonb_build_object(
+      'footer', jsonb_build_object('text', coalesce(v_embeds->(jsonb_array_length(v_embeds) - 1)->'footer'->>'text' || ' · ', '')
+                                           || 'Calculadora ' || c.nome_organizacao, 'icon_url', v_logo),
+      'timestamp', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')));
+
+  return jsonb_strip_nulls(jsonb_build_object(
+    'username', c.nome_organizacao || ' — Relatórios',
+    'avatar_url', v_logo,
+    'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb),
+    'content', case when p_simulado then '🧪 **Simulação do relatório semanal** — dados fictícios, só para aprovar o visual.' end,
+    'embeds', v_embeds));
+end;
 $$;
 
 -- Envia o relatório da semana que começa em p_inicio para o webhook de relatórios.
@@ -1214,36 +1744,9 @@ begin
   if v_url is null then
     raise exception 'Nenhum webhook do Discord configurado.';
   end if;
-
   r := public._relatorio(v_ini, v_ini + 6);
-
-  perform net.http_post(url := v_url, body := jsonb_build_object(
-    'username', c.nome_organizacao || ' — Relatórios',
-    'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb),
-    'embeds', jsonb_build_array(jsonb_build_object(
-      'title', '📊 Relatório semanal — ' || to_char(v_ini, 'DD/MM') || ' a ' || to_char(v_ini + 6, 'DD/MM/YYYY'),
-      'color', 2001125,
-      'fields', jsonb_build_array(
-        jsonb_build_object('name', 'Total vendido', 'value', '**' || public._formatar_valor((r->>'total')::numeric) || '**', 'inline', true),
-        jsonb_build_object('name', 'Vendas', 'value', r->>'quantidade', 'inline', true),
-        jsonb_build_object('name', 'Com parceria', 'value', public._formatar_valor((r->>'total_com_parceria')::numeric), 'inline', true),
-        jsonb_build_object('name', 'Pista', 'value', public._formatar_valor((r->>'total_sem_parceria')::numeric), 'inline', true),
-        jsonb_build_object('name', 'Comissões', 'value', public._formatar_valor((r->>'comissao')::numeric), 'inline', true),
-        jsonb_build_object('name', '🏆 Vendedores', 'value', public._linhas_relatorio(r->'por_vendedor')),
-        jsonb_build_object('name', '💰 Pagamento (' || round((r->>'percentual_comissao')::numeric * 100) || '%)', 'value', coalesce((
-          select left(string_agg('**' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'comissao')::numeric)
-                   || case when (e->>'pendente')::numeric <= 0 then ' ✅ pago' else ' ⏳ pendente' end, E'\n' order by ord), 1024)
-          from jsonb_array_elements(r->'por_vendedor') with ordinality as t (e, ord) where ord <= 20), '—')),
-        jsonb_build_object('name', '🤝 Parcerias', 'value', public._linhas_relatorio(r->'por_parceria')),
-        jsonb_build_object('name', '📦 Produtos', 'value', public._linhas_relatorio(r->'por_produto', true)),
-        jsonb_build_object('name', '🔧 Craft usado', 'value', coalesce((
-          select string_agg((e->>'nome') || ': **' || (e->>'quantidade') || '**', ' · ')
-          from jsonb_array_elements(r->'craft') e), '—'))
-      ),
-      'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao),
-      'timestamp', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-    ))
-  ));
+  r := r || jsonb_build_object('total_anterior', (public._relatorio(v_ini - 7, v_ini - 1))->'total');
+  perform net.http_post(url := v_url, body := public._corpo_relatorio(r, false));
   return r;
 end;
 $$;
@@ -1254,23 +1757,92 @@ language plpgsql volatile security definer
 set search_path = public
 as $$
 begin
-  if not public.is_admin() then
+  if not public.tem_permissao('ver_relatorio') then
     raise exception 'Acesso negado.';
   end if;
   return public._enviar_relatorio(p_inicio);
 end;
 $$;
 
--- Usado pelo agendamento: envia o relatório da semana anterior.
+-- Envia um relatório com dados fictícios (produtos reais, números inventados) para aprovar o visual.
+create or replace function public.enviar_relatorio_simulado()
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  c public.configuracoes;
+  v_url text;
+  v_ini date := public._inicio_semana((now() at time zone 'America/Sao_Paulo')::date) - 7;
+  v_prod jsonb;
+  v_total numeric;
+  v_pct numeric;
+  v_vend jsonb;
+  r jsonb;
+begin
+  if not (public._e_dev() or public._e_lider()) then
+    raise exception 'Só o DEV ou o líder podem enviar a simulação.';
+  end if;
+  select * into c from public.configuracoes where id = 1;
+  v_url := coalesce(nullif(c.webhook_relatorios, ''), nullif(c.webhook_vendas, ''));
+  if v_url is null then
+    raise exception 'Configure o webhook de relatórios na aba Discord.';
+  end if;
+  v_pct := c.percentual_comissao;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'nome', p.nome, 'icone', p.icone, 'imagem', p.imagem, 'quantidade', p.q, 'total', p.q * p.preco_sem_parceria,
+           'craft', coalesce((select jsonb_agg(jsonb_build_object('nome', m->>'material', 'quantidade', (m->>'quantidade')::int * p.q))
+                              from jsonb_array_elements(p.craft) m), '[]'::jsonb))
+         order by p.q * p.preco_sem_parceria desc), '[]'::jsonb)
+    into v_prod
+    from (select pr.*, (array[14, 11, 9, 7, 6, 4, 3, 2, 2, 1])[row_number() over (order by pr.ordem, pr.nome)] as q
+          from public.produtos pr where pr.ativo order by pr.ordem, pr.nome limit 10) p;
+  select coalesce(sum((e->>'total')::numeric), 0) into v_total from jsonb_array_elements(v_prod) e;
+
+  v_vend := jsonb_build_array(
+    jsonb_build_object('nome', 'Vendedor Exemplo 1', 'quantidade', 9, 'total', round(v_total * 0.38), 'comissao', round(v_total * 0.38 * v_pct * 0.9), 'pago', round(v_total * 0.38 * v_pct * 0.9), 'pendente', 0, 'id_pagamento', '10234'),
+    jsonb_build_object('nome', 'Vendedor Exemplo 2', 'quantidade', 7, 'total', round(v_total * 0.27), 'comissao', round(v_total * 0.27 * v_pct * 0.9), 'pago', 0, 'pendente', round(v_total * 0.27 * v_pct * 0.9), 'id_pagamento', '20871'),
+    jsonb_build_object('nome', 'Vendedor Exemplo 3', 'quantidade', 5, 'total', round(v_total * 0.2), 'comissao', round(v_total * 0.2 * v_pct * 0.9), 'pago', round(v_total * 0.1 * v_pct), 'pendente', round(v_total * 0.2 * v_pct * 0.9) - round(v_total * 0.1 * v_pct), 'id_pagamento', '33310'),
+    jsonb_build_object('nome', 'Vendedor Exemplo 4', 'quantidade', 3, 'total', v_total - round(v_total * 0.38) - round(v_total * 0.27) - round(v_total * 0.2), 'comissao', round((v_total * 0.15) * v_pct * 0.9), 'pago', 0, 'pendente', round((v_total * 0.15) * v_pct * 0.9)));
+
+  r := jsonb_build_object(
+    'inicio', v_ini, 'fim', v_ini + 6,
+    'quantidade', 24, 'total', v_total, 'total_anterior', round(v_total * 0.86),
+    'total_com_parceria', round(v_total * 0.62), 'total_sem_parceria', v_total - round(v_total * 0.62),
+    'comissao', round(v_total * v_pct * 0.9), 'percentual_comissao', v_pct,
+    'por_vendedor', v_vend,
+    'por_parceria', jsonb_build_array(
+      jsonb_build_object('nome', 'Organização Alfa', 'quantidade', 8, 'total', round(v_total * 0.34)),
+      jsonb_build_object('nome', 'Organização Beta', 'quantidade', 5, 'total', round(v_total * 0.28)),
+      jsonb_build_object('nome', 'Pista (sem parceria)', 'quantidade', 11, 'total', v_total - round(v_total * 0.62))),
+    'por_produto', v_prod,
+    'craft', coalesce((select jsonb_agg(jsonb_build_object('nome', nome, 'quantidade', q) order by nome)
+                       from (select m->>'nome' as nome, sum((m->>'quantidade')::int) as q
+                             from jsonb_array_elements(v_prod) e, jsonb_array_elements(e->'craft') m group by 1) s), '[]'::jsonb));
+
+  perform net.http_post(url := v_url, body := public._corpo_relatorio(r, true));
+end;
+$$;
+
+-- Usado pelo agendamento (a cada 5 minutos): envia o relatório da semana anterior
+-- no dia e horário escolhidos (horário de Brasília), uma vez por semana.
 create or replace function public._relatorio_automatico()
 returns void
 language plpgsql volatile security definer
 set search_path = public
 as $$
+declare
+  c public.configuracoes;
+  v_agora timestamp := now() at time zone 'America/Sao_Paulo';
+  v_semana date := public._inicio_semana((now() at time zone 'America/Sao_Paulo')::date);
 begin
-  if (select relatorio_automatico from public.configuracoes where id = 1) then
-    perform public._enviar_relatorio(((now() at time zone 'America/Sao_Paulo')::date - 7));
-  end if;
+  select * into c from public.configuracoes where id = 1;
+  if not c.relatorio_automatico then return; end if;
+  if extract(isodow from v_agora) <> c.relatorio_dia or v_agora::time < c.relatorio_hora then return; end if;
+  if c.relatorio_ultima_semana is not distinct from v_semana then return; end if;
+  update public.configuracoes set relatorio_ultima_semana = v_semana where id = 1;
+  perform public._enviar_relatorio(v_semana - 7);
 end;
 $$;
 
@@ -1357,13 +1929,14 @@ begin
   -- Aviso no Discord (falha no envio não desfaz o pagamento).
   begin
     select * into c from public.configuracoes where id = 1;
-    v_url := coalesce(nullif(c.webhook_relatorios, ''), nullif(c.webhook_vendas, ''));
+    v_url := coalesce(nullif(c.webhook_pagamentos, ''), nullif(c.webhook_relatorios, ''), nullif(c.webhook_vendas, ''));
     if v_url is not null then
       v_campos := jsonb_build_array(
-        jsonb_build_object('name', 'Vendedor', 'value', v_nome, 'inline', true),
-        jsonb_build_object('name', 'Semana', 'value', to_char(v_ini, 'DD/MM') || ' a ' || to_char(v_ini + 6, 'DD/MM/YYYY'), 'inline', true),
-        jsonb_build_object('name', 'Valor pago', 'value', '**' || public._formatar_valor(v_valor) || '**', 'inline', true),
-        jsonb_build_object('name', 'Pago por', 'value', v_quem, 'inline', true)
+        jsonb_build_object('name', '👤 Vendedor', 'value', v_nome, 'inline', true),
+        jsonb_build_object('name', '🗓️ Semana', 'value', to_char(v_ini, 'DD/MM') || ' a ' || to_char(v_ini + 6, 'DD/MM/YYYY'), 'inline', true),
+        jsonb_build_object('name', '💰 Valor pago', 'value', '**' || public._formatar_valor(v_valor) || '**', 'inline', true),
+        jsonb_build_object('name', '🆔 ID para pagamento', 'value', coalesce('`' || nullif(vd.id_pagamento, '') || '`', '—'), 'inline', true),
+        jsonb_build_object('name', '✍️ Pago por', 'value', v_quem, 'inline', true)
       );
       if v_pago > 0 then
         v_campos := v_campos || jsonb_build_object('name', 'Total pago na semana', 'value',
@@ -1374,6 +1947,7 @@ begin
       end if;
       perform net.http_post(url := v_url, body := jsonb_build_object(
         'username', c.nome_organizacao || ' — Pagamentos',
+        'avatar_url', public._url_imagem('img/logo.png'),
         'content', '||<@' || vd.discord_id || '>||',
         'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb, 'users', jsonb_build_array(vd.discord_id)),
         'embeds', jsonb_build_array(jsonb_build_object(
@@ -1389,7 +1963,7 @@ begin
     raise warning 'Falha ao avisar pagamento %: %', v_id, sqlerrm;
   end;
 
-  return jsonb_build_object('id', v_id, 'valor', v_valor, 'semana_inicio', v_ini, 'notificado', v_url is not null);
+  return jsonb_build_object('id', v_id, 'valor', v_valor, 'semana_inicio', v_ini, 'notificado', v_url is not null, 'id_pagamento', vd.id_pagamento);
 end;
 $$;
 
@@ -1445,9 +2019,30 @@ begin
   end if;
   return jsonb_build_object(
     'bot_configurado', public._token_bot() is not null,
+    'app_id', public._bot_app_id(),
     'servidor_id', (select discord_servidor_id from public.configuracoes where id = 1),
     'pendentes', (select count(*) from public.discord_pedidos)
   );
+end;
+$$;
+
+-- ID da aplicação do bot (é a primeira parte do token, em base64). Usado no link de convite.
+create or replace function public._bot_app_id()
+returns text
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  v_parte text := split_part(coalesce(public._token_bot(), ''), '.', 1);
+  v_id text;
+begin
+  if v_parte = '' then return null; end if;
+  v_parte := translate(v_parte, '-_', '+/');
+  v_parte := v_parte || repeat('=', (4 - length(v_parte) % 4) % 4);
+  v_id := convert_from(decode(v_parte, 'base64'), 'UTF8');
+  return case when v_id ~ '^\d{17,20}$' then v_id end;
+exception when others then
+  return null;
 end;
 $$;
 
@@ -1623,6 +2218,295 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
+-- Fórum de parceiros no Discord
+-- Dentro da categoria configurada, o bot mantém um fórum para cada produto que as
+-- parcerias vendem (arma, munição…) e um post por parceria em cada fórum.
+-- O post é atualizado quando a parceria muda e apagado quando ela é encerrada
+-- (ou deixa de vender o produto). Roda a cada minuto e logo após salvar uma parceria.
+-- -----------------------------------------------------------------------------
+
+-- Uma chamada à API do Discord (síncrona, com a extensão http).
+-- (criada sem checar o corpo: se a extensão http ainda não estiver ativa, o resto do script roda igual)
+set check_function_bodies = off;
+create or replace function public._discord_api(p_metodo text, p_caminho text, p_corpo jsonb default null)
+returns table (status int, corpo jsonb)
+language plpgsql volatile security definer
+set search_path = public, extensions
+as $$
+declare
+  v_resp extensions.http_response;
+  v_corpo jsonb;
+begin
+  perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '5000');
+  v_resp := extensions.http((
+    p_metodo,
+    'https://discord.com/api/v10' || p_caminho,
+    array[extensions.http_header('Authorization', 'Bot ' || public._token_bot()),
+          extensions.http_header('User-Agent', 'BlueDragonsCalc (supabase, 1.0)')],
+    'application/json',
+    case when p_corpo is null then null else p_corpo::text end
+  )::extensions.http_request);
+  begin
+    v_corpo := nullif(v_resp.content, '')::jsonb;
+  exception when others then
+    v_corpo := jsonb_build_object('message', left(v_resp.content, 200));
+  end;
+  return query select v_resp.status, v_corpo;
+end;
+$$;
+reset check_function_bodies;
+
+-- Parcerias ativas × produtos que vendem (o que deve existir no fórum).
+create or replace function public._forum_desejado()
+returns table (parceria_id uuid, chave text, produto text)
+language sql stable
+as $$
+  select p.id, public._chave_produto(x), min(x)
+  from public.parcerias p, unnest(p.produtos) x
+  where p.ativo and public._chave_produto(x) <> ''
+  group by p.id, public._chave_produto(x);
+$$;
+
+-- Conteúdo do post de uma parceria (e o hash, para só editar quando algo mudar).
+create or replace function public._forum_post(p public.parcerias)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  v_org text := (select nome_organizacao from public.configuracoes where id = 1);
+  v_embed jsonb;
+begin
+  v_embed := jsonb_strip_nulls(jsonb_build_object(
+    'title', '🤝 ' || p.nome,
+    'description', p.observacoes,
+    'color', 3447003,
+    'thumbnail', jsonb_build_object('url', public._url_imagem('img/logo.png')),
+    'fields', jsonb_build_array(
+      public._campo('📦 Vende', coalesce(nullif(array_to_string(p.produtos, ' · '), ''), '—'), false),
+      public._campo('📞 Responsável / contato', p.responsavel),
+      public._campo('✍️ Parceria feita por', p.feita_por_nome),
+      public._campo('📅 Parceira desde', to_char(p.criado_em at time zone 'America/Sao_Paulo', 'DD/MM/YYYY'))),
+    'footer', jsonb_build_object('text', 'Atualizado automaticamente pela calculadora ' || v_org)));
+  return jsonb_build_object('nome', left(p.nome, 100), 'embed', v_embed, 'hash', md5(left(p.nome, 100) || v_embed::text));
+end;
+$$;
+
+create or replace function public._forum_erro(p_status int, p_corpo jsonb)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_msg text := case
+    when p_status = 401 then 'Token do bot inválido. Salve um token novo.'
+    when p_status = 403 or (p_corpo->>'code') in ('50001', '50013') then
+      'O bot não tem permissão na categoria. Dê ao bot: Ver canais, Gerenciar canais, Enviar mensagens, '
+      || 'Enviar mensagens em tópicos, Gerenciar tópicos e Inserir links (ou use o link de convite com permissões).'
+    when p_status = 429 then 'O Discord limitou as chamadas. Continua sozinho no próximo minuto.'
+    when p_status = 0 then coalesce(p_corpo->>'message', 'Erro.')
+    else 'Erro do Discord: ' || coalesce(p_status::text, '') || ' ' || coalesce(left(p_corpo->>'message', 150), '')
+  end;
+begin
+  insert into public.discord_estado (chave, valor, em) values ('erro', v_msg, now())
+  on conflict (chave) do update set valor = excluded.valor, em = excluded.em;
+  return jsonb_build_object('ativo', true, 'erro', v_msg);
+end;
+$$;
+
+create or replace function public._forum_sincronizar(p_limite int default 25, p_forcar boolean default false)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  c public.configuracoes;
+  v_srv text;
+  v_cat text;
+  r record;
+  s int;
+  b jsonb;
+  v_feitos int := 0;
+begin
+  select * into c from public.configuracoes where id = 1;
+  v_srv := c.discord_servidor_id;
+  v_cat := c.discord_categoria_parceiros;
+  if public._token_bot() is null or v_srv is null or v_cat is null then
+    return jsonb_build_object('ativo', false);
+  end if;
+  if not exists (select 1 from pg_extension where extname = 'http') then
+    return public._forum_erro(0, jsonb_build_object('message', 'Ative a extensão "http" no Supabase (Database → Extensions) e rode o schema.sql de novo.'));
+  end if;
+  -- Só uma sincronização por vez (cron e botão ao mesmo tempo duplicariam posts).
+  if not pg_try_advisory_xact_lock(hashtext('bluedragons-forum')) then
+    return jsonb_build_object('ativo', true, 'ocupado', true);
+  end if;
+  -- Depois de um erro, o agendamento espera 5 minutos (o botão tenta na hora).
+  if not p_forcar and exists (select 1 from public.discord_estado where chave = 'erro' and em > now() - interval '5 minutes') then
+    return jsonb_build_object('ativo', true, 'erro', (select valor from public.discord_estado where chave = 'erro'));
+  end if;
+
+  -- 1. Canais do servidor: confere a categoria, adota fóruns criados à mão e esquece os apagados.
+  select x.status, x.corpo into s, b from public._discord_api('GET', '/guilds/' || v_srv || '/channels') x;
+  v_feitos := v_feitos + 1;
+  if s <> 200 or jsonb_typeof(b) <> 'array' then return public._forum_erro(s, b); end if;
+  if not exists (select 1 from jsonb_array_elements(b) e where e->>'id' = v_cat and (e->>'type')::int = 4) then
+    return public._forum_erro(0, jsonb_build_object('message', 'A categoria ' || v_cat || ' não existe neste servidor (ou o bot não a enxerga).'));
+  end if;
+  delete from public.discord_foruns f
+  where f.canal_id is not null and not exists (
+    select 1 from jsonb_array_elements(b) e where e->>'id' = f.canal_id and e->>'parent_id' = v_cat);
+  insert into public.discord_foruns (chave, nome, canal_id)
+  select distinct on (public._chave_produto(e->>'name')) public._chave_produto(e->>'name'), e->>'name', e->>'id'
+  from jsonb_array_elements(b) e
+  where (e->>'type')::int = 15 and e->>'parent_id' = v_cat and public._chave_produto(e->>'name') <> ''
+  order by public._chave_produto(e->>'name'), (e->>'position')::int
+  on conflict (chave) do update set canal_id = excluded.canal_id, nome = excluded.nome, atualizado_em = now()
+    where public.discord_foruns.canal_id is null;
+  delete from public.discord_posts p where not exists (select 1 from public.discord_foruns f where f.chave = p.chave);
+
+  -- 2. Cria os fóruns que faltam (um por produto vendido).
+  for r in
+    select d.chave, min(d.produto) as produto
+    from public._forum_desejado() d left join public.discord_foruns f on f.chave = d.chave
+    where f.canal_id is null group by d.chave order by d.chave
+  loop
+    exit when v_feitos >= p_limite;
+    select x.status, x.corpo into s, b from public._discord_api('POST', '/guilds/' || v_srv || '/channels', jsonb_build_object(
+      'name', left(lower(regexp_replace(btrim(r.produto), '\s+', '-', 'g')), 100),
+      'type', 15,
+      'parent_id', v_cat,
+      'topic', 'Parceiros que vendem ' || r.produto || '. Atualizado automaticamente pela calculadora.')) x;
+    v_feitos := v_feitos + 1;
+    if s not in (200, 201) then return public._forum_erro(s, b); end if;
+    insert into public.discord_foruns (chave, nome, canal_id) values (r.chave, b->>'name', b->>'id')
+    on conflict (chave) do update set canal_id = excluded.canal_id, nome = excluded.nome, atualizado_em = now();
+  end loop;
+
+  -- 3. Apaga os posts que não devem mais existir (parceria encerrada ou que parou de vender o produto).
+  for r in
+    select p.* from public.discord_posts p
+    where not exists (select 1 from public._forum_desejado() d where d.parceria_id = p.parceria_id and d.chave = p.chave)
+  loop
+    exit when v_feitos >= p_limite;
+    select x.status, x.corpo into s, b from public._discord_api('DELETE', '/channels/' || r.thread_id) x;
+    v_feitos := v_feitos + 1;
+    if s not in (200, 204, 404) then return public._forum_erro(s, b); end if;
+    delete from public.discord_posts where parceria_id = r.parceria_id and chave = r.chave;
+  end loop;
+
+  -- 4. Cria os posts novos e atualiza os que mudaram.
+  for r in
+    select d.parceria_id, d.chave, f.canal_id, p.thread_id, p.hash, p.nome as nome_post, public._forum_post(pa) as post
+    from public._forum_desejado() d
+    join public.discord_foruns f on f.chave = d.chave and f.canal_id is not null
+    join public.parcerias pa on pa.id = d.parceria_id
+    left join public.discord_posts p on p.parceria_id = d.parceria_id and p.chave = d.chave
+    order by pa.nome, d.chave
+  loop
+    continue when r.thread_id is not null and r.hash = r.post->>'hash';
+    exit when v_feitos >= p_limite;
+    if r.thread_id is null then
+      select x.status, x.corpo into s, b from public._discord_api('POST', '/channels/' || r.canal_id || '/threads', jsonb_build_object(
+        'name', r.post->>'nome',
+        'auto_archive_duration', 10080,
+        'message', jsonb_build_object('embeds', jsonb_build_array(r.post->'embed'), 'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb)))) x;
+      v_feitos := v_feitos + 1;
+      if s not in (200, 201) then return public._forum_erro(s, b); end if;
+      insert into public.discord_posts (parceria_id, chave, thread_id, nome, hash)
+      values (r.parceria_id, r.chave, b->>'id', r.post->>'nome', r.post->>'hash')
+      on conflict (parceria_id, chave) do update set thread_id = excluded.thread_id, nome = excluded.nome, hash = excluded.hash, atualizado_em = now();
+    else
+      -- Nome do post (e desarquiva, para poder editar).
+      if r.nome_post is distinct from r.post->>'nome' then
+        select x.status, x.corpo into s, b from public._discord_api('PATCH', '/channels/' || r.thread_id,
+          jsonb_build_object('name', r.post->>'nome', 'archived', false)) x;
+        v_feitos := v_feitos + 1;
+        if s = 404 then delete from public.discord_posts where parceria_id = r.parceria_id and chave = r.chave; continue; end if;
+        if s <> 200 then return public._forum_erro(s, b); end if;
+      end if;
+      -- A primeira mensagem do post tem o mesmo ID do post.
+      select x.status, x.corpo into s, b from public._discord_api('PATCH', '/channels/' || r.thread_id || '/messages/' || r.thread_id,
+        jsonb_build_object('embeds', jsonb_build_array(r.post->'embed'))) x;
+      v_feitos := v_feitos + 1;
+      if s = 400 and (b->>'code') = '50083' then -- post arquivado: desarquiva e tenta de novo
+        perform public._discord_api('PATCH', '/channels/' || r.thread_id, jsonb_build_object('archived', false));
+        select x.status, x.corpo into s, b from public._discord_api('PATCH', '/channels/' || r.thread_id || '/messages/' || r.thread_id,
+          jsonb_build_object('embeds', jsonb_build_array(r.post->'embed'))) x;
+        v_feitos := v_feitos + 2;
+      end if;
+      if s = 404 then -- apagado à mão: recria na próxima rodada
+        delete from public.discord_posts where parceria_id = r.parceria_id and chave = r.chave;
+        continue;
+      end if;
+      if s <> 200 then return public._forum_erro(s, b); end if;
+      update public.discord_posts set hash = r.post->>'hash', nome = r.post->>'nome', atualizado_em = now()
+      where parceria_id = r.parceria_id and chave = r.chave;
+    end if;
+  end loop;
+
+  delete from public.discord_estado where chave = 'erro';
+  insert into public.discord_estado (chave, valor, em) values ('ok', null, now())
+  on conflict (chave) do update set em = excluded.em;
+  return public._forum_resumo();
+end;
+$$;
+
+create or replace function public._forum_resumo()
+returns jsonb
+language sql stable security definer
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'ativo', (select discord_categoria_parceiros is not null from public.configuracoes where id = 1) and public._token_bot() is not null,
+    'erro', (select valor from public.discord_estado where chave = 'erro'),
+    'erro_em', (select em from public.discord_estado where chave = 'erro'),
+    'ok_em', (select em from public.discord_estado where chave = 'ok'),
+    'foruns', coalesce((select jsonb_agg(jsonb_build_object('nome', f.nome, 'posts', (select count(*) from public.discord_posts p where p.chave = f.chave)) order by f.nome)
+                        from public.discord_foruns f where f.canal_id is not null), '[]'::jsonb),
+    'faltam', (select count(*) from public._forum_desejado() d
+               where not exists (select 1 from public.discord_posts p where p.parceria_id = d.parceria_id and p.chave = d.chave)));
+$$;
+
+-- Botão "Sincronizar agora" (DEV) e atualização logo após salvar uma parceria.
+create or replace function public.forum_sincronizar_agora()
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if not public._e_dev() then raise exception 'Só o DEV pode configurar o Discord.'; end if;
+  return public._forum_sincronizar(10, true);
+end;
+$$;
+
+create or replace function public.forum_atualizar()
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+begin
+  if not (public.tem_permissao('editar_parcerias') or public.tem_permissao('encerrar_parceria')) then
+    raise exception 'Acesso negado.';
+  end if;
+  return public._forum_sincronizar(5, false);
+exception when others then
+  return jsonb_build_object('erro', sqlerrm);
+end;
+$$;
+
+create or replace function public.forum_status()
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+begin
+  if not public._e_dev() then raise exception 'Só o DEV pode configurar o Discord.'; end if;
+  return public._forum_resumo();
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
 -- Permissões de execução das funções
 -- -----------------------------------------------------------------------------
 
@@ -1635,7 +2519,7 @@ grant execute on function public.meu_perfil() to authenticated;
 grant execute on function public.registrar_venda(jsonb, uuid, text, text) to authenticated;
 grant execute on function public.minha_semana() to authenticated;
 grant execute on function public.ranking_vendedores(date, date) to authenticated;
-grant execute on function public.salvar_vendedor(uuid, text, text, boolean, boolean) to authenticated;
+grant execute on function public.salvar_vendedor(uuid, text, text, boolean, boolean, uuid, text) to authenticated;
 grant execute on function public.relatorio_periodo(date, date) to authenticated;
 grant execute on function public.enviar_relatorio_discord(date) to authenticated;
 grant execute on function public.registrar_pagamento(uuid, date, text) to authenticated;
@@ -1650,14 +2534,30 @@ grant execute on function public.discord_status() to authenticated;
 grant execute on function public.discord_buscar_nomes(uuid) to authenticated;
 grant execute on function public.discord_aplicar_nomes() to authenticated;
 grant execute on function public.atualizar_meu_discord() to authenticated;
+grant execute on function public.minhas_novidades(boolean) to authenticated;
+grant execute on function public.marcar_novidades_vistas() to authenticated;
+grant execute on function public.vendas_por_parceria(date, date) to authenticated;
+grant execute on function public.enviar_relatorio_simulado() to authenticated;
+grant execute on function public.forum_sincronizar_agora() to authenticated;
+grant execute on function public.forum_atualizar() to authenticated;
+grant execute on function public.forum_status() to authenticated;
 
 -- -----------------------------------------------------------------------------
--- Agendamento: relatório semanal toda segunda às 09:00 (horário de Brasília).
+-- Agendamentos
 -- -----------------------------------------------------------------------------
 
+-- Relatório semanal: confere a cada 5 minutos se chegou o dia e o horário escolhidos na aba Discord.
 select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-relatorio-semanal';
-select cron.schedule('bluedragons-relatorio-semanal', '0 12 * * 1', 'select public._relatorio_automatico()');
+select cron.schedule('bluedragons-relatorio-semanal', '*/5 * * * *', 'select public._relatorio_automatico()');
 
 -- Nomes do Discord: aplica as respostas anteriores e pede os nomes de novo a cada 10 minutos.
 select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-nomes-discord';
 select cron.schedule('bluedragons-nomes-discord', '*/10 * * * *', 'select public._discord_aplicar_nomes(); select public._discord_buscar_nomes(null);');
+
+-- Fórum de parceiros: confere e atualiza a cada minuto (sem categoria configurada, não faz nada).
+select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-forum-parceiros';
+select cron.schedule('bluedragons-forum-parceiros', '* * * * *', 'select public._forum_sincronizar()');
+
+-- Novidades com mais de 90 dias saem da lista.
+select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-limpar-novidades';
+select cron.schedule('bluedragons-limpar-novidades', '30 7 * * *', $$delete from public.novidades where criado_em < now() - interval '90 days'$$);
