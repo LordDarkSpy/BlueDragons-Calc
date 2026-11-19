@@ -1596,7 +1596,22 @@ returns text
 language sql immutable
 as $$ select case p_pos when 1 then '🥇' when 2 then '🥈' when 3 then '🥉' else '`' || p_pos || 'º`' end; $$;
 
--- Monta a mensagem do relatório (vários embeds, com logo, fotos e imagens dos produtos).
+-- Número inteiro com ponto no milhar (para as tabelas do relatório).
+create or replace function public._num(p_valor numeric)
+returns text
+language sql immutable
+as $$ select replace(to_char(round(coalesce(p_valor, 0)), 'FM999G999G999G990'), ',', '.'); $$;
+
+-- Uma linha de tabela: textos à esquerda e números à direita, com largura fixa.
+create or replace function public._col(p_texto text, p_largura int, p_direita boolean default false)
+returns text
+language sql immutable
+as $$
+  select case when p_direita then lpad(left(coalesce(p_texto, ''), p_largura), p_largura)
+              else rpad(left(coalesce(p_texto, ''), p_largura), p_largura) end;
+$$;
+
+-- Monta a mensagem do relatório: um único embed, com tabelas no estilo da planilha.
 -- r: resultado de _relatorio (+ total_anterior, opcional).
 create or replace function public._corpo_relatorio(r jsonb, p_simulado boolean default false)
 returns jsonb
@@ -1608,141 +1623,112 @@ declare
   v_ini date := (r->>'inicio')::date;
   v_fim date := (r->>'fim')::date;
   v_logo text := public._url_imagem('img/logo.png');
-  v_embeds jsonb := '[]'::jsonb;
   v_qtd numeric := coalesce((r->>'quantidade')::numeric, 0);
   v_total numeric := coalesce((r->>'total')::numeric, 0);
   v_anterior numeric := (r->>'total_anterior')::numeric;
+  v_pct numeric := round(coalesce((r->>'percentual_comissao')::numeric, 0) * 100, 1);
+  v_moeda text := btrim((select moeda from public.configuracoes where id = 1));
   v_itens numeric;
   v_txt text;
-  v_max numeric;
-  v_pagos int;
-  v_com int;
-  v_pend numeric;
   v_var text := '';
-  x jsonb;
-  v_ord bigint;
+  v_tab text := '';
+  v_linhas text;
 begin
   select * into c from public.configuracoes where id = 1;
   select coalesce(sum((e->>'quantidade')::numeric), 0) into v_itens from jsonb_array_elements(coalesce(r->'por_produto', '[]')) e;
   if v_anterior is not null and v_anterior > 0 then
-    v_var := E'\n' || case when v_total >= v_anterior then '📈 **+' else '📉 **' end
-             || round((v_total - v_anterior) / v_anterior * 100) || '%** em relação à semana anterior ('
-             || public._formatar_valor(v_anterior) || ')';
+    v_var := ' · ' || case when v_total >= v_anterior then '📈 +' else '📉 ' end
+             || round((v_total - v_anterior) / v_anterior * 100) || '% vs. semana anterior';
   end if;
 
-  -- 1. Resumo
-  v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
-    'author', jsonb_build_object('name', c.nome_organizacao || ' · Relatório da semana', 'icon_url', v_logo),
-    'title', '📊 Relatório semanal' || case when p_simulado then ' — simulação' else '' end,
-    'description', '🗓️ Semana de **' || to_char(v_ini, 'DD/MM') || '** a **' || to_char(v_fim, 'DD/MM/YYYY') || '**' || v_var,
-    'color', 2001125,
-    'thumbnail', jsonb_build_object('url', v_logo),
-    'fields', jsonb_build_array(
-      public._campo('💰 Total vendido', '**' || public._formatar_valor(v_total) || '**'),
-      public._campo('🧾 Vendas', v_qtd::text),
-      public._campo('📦 Itens vendidos', replace(to_char(v_itens, 'FM999G999G990'), ',', '.')),
-      public._campo('🤝 Com parceria', public._formatar_valor((r->>'total_com_parceria')::numeric)),
-      public._campo('🛣️ Pista', public._formatar_valor((r->>'total_sem_parceria')::numeric)),
-      public._campo('🎯 Ticket médio', public._formatar_valor(case when v_qtd > 0 then v_total / v_qtd else 0 end)),
-      public._campo('💸 Comissões (' || round(coalesce((r->>'percentual_comissao')::numeric, 0) * 100) || '%)',
-                    public._formatar_valor((r->>'comissao')::numeric)))
-  ));
+  -- RESUMO
+  v_tab := 'RESUMO' || E'\n'
+    || public._col('Total vendido', 22) || public._col(public._num(v_total), 14, true) || E'\n'
+    || public._col('Vendas', 22) || public._col(v_qtd::text, 14, true) || E'\n'
+    || public._col('Itens vendidos', 22) || public._col(public._num(v_itens), 14, true) || E'\n'
+    || public._col('Com parceria', 22) || public._col(public._num((r->>'total_com_parceria')::numeric), 14, true) || E'\n'
+    || public._col('Pista', 22) || public._col(public._num((r->>'total_sem_parceria')::numeric), 14, true) || E'\n'
+    || public._col('Ticket médio', 22) || public._col(public._num(case when v_qtd > 0 then v_total / v_qtd end), 14, true) || E'\n'
+    || public._col('Comissões (' || v_pct || '%)', 22) || public._col(public._num((r->>'comissao')::numeric), 14, true);
 
-  if jsonb_array_length(coalesce(r->'por_vendedor', '[]')) = 0 then
-    v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
-      'description', '😴 Nenhuma venda registrada nesta semana.', 'color', 9807270));
+  if jsonb_array_length(coalesce(r->'por_vendedor', '[]')) > 0 then
+    -- VENDEDORES
+    select string_agg(public._col(ord || '. ' || (e->>'nome'), 16) || public._col(e->>'quantidade', 5, true)
+                      || public._col(public._num((e->>'total')::numeric), 11, true)
+                      || public._col(public._num((e->>'comissao')::numeric), 10, true)
+                      || '  ' || case when (e->>'comissao')::numeric <= 0 then '-' when (e->>'pendente')::numeric <= 0 then 'PAGO' else 'FALTA' end,
+                      E'\n' order by ord)
+      into v_linhas
+      from jsonb_array_elements(r->'por_vendedor') with ordinality t (e, ord) where ord <= 12;
+    v_tab := v_tab || E'\n\n'
+      || public._col('VENDEDOR', 16) || public._col('VEND', 5, true) || public._col('TOTAL', 11, true) || public._col('COMISSÃO', 10, true) || '  SIT.' || E'\n'
+      || repeat('-', 49) || E'\n' || v_linhas || E'\n' || repeat('-', 49) || E'\n'
+      || public._col('TOTAL', 16) || public._col(v_qtd::text, 5, true) || public._col(public._num(v_total), 11, true)
+      || public._col(public._num((r->>'comissao')::numeric), 10, true);
+
+    -- PAGAMENTO (quem tem comissão, com o ID para pagamento)
+    select string_agg(public._col(e->>'nome', 16) || public._col(coalesce(nullif(e->>'id_pagamento', ''), '-'), 14)
+                      || public._col(case when (e->>'pendente')::numeric <= 0 then 'pago' else public._num((e->>'pendente')::numeric) end, 12, true),
+                      E'\n' order by ord)
+      into v_linhas
+      from jsonb_array_elements(r->'por_vendedor') with ordinality t (e, ord)
+      where (e->>'comissao')::numeric > 0 and ord <= 12;
+    if v_linhas is not null then
+      v_tab := v_tab || E'\n\n'
+        || public._col('PAGAMENTO', 16) || public._col('ID PGTO', 14) || public._col('A PAGAR', 12, true) || E'\n'
+        || repeat('-', 42) || E'\n' || v_linhas;
+    end if;
+
+    -- PARCERIAS
+    select string_agg(public._col(e->>'nome', 22) || public._col(e->>'quantidade', 6, true)
+                      || public._col(public._num((e->>'total')::numeric), 12, true), E'\n' order by ord)
+      into v_linhas
+      from jsonb_array_elements(r->'por_parceria') with ordinality t (e, ord) where ord <= 8;
+    if v_linhas is not null then
+      v_tab := v_tab || E'\n\n'
+        || public._col('CLIENTE / PARCERIA', 22) || public._col('VEND', 6, true) || public._col('TOTAL', 12, true) || E'\n'
+        || repeat('-', 40) || E'\n' || v_linhas;
+    end if;
+
+    -- PRODUTOS
+    select string_agg(public._col(e->>'nome', 22) || public._col(public._num((e->>'quantidade')::numeric), 6, true)
+                      || public._col(public._num((e->>'total')::numeric), 12, true), E'\n' order by ord)
+      into v_linhas
+      from jsonb_array_elements(r->'por_produto') with ordinality t (e, ord) where ord <= 10;
+    if v_linhas is not null then
+      v_tab := v_tab || E'\n\n'
+        || public._col('PRODUTO', 22) || public._col('QTD', 6, true) || public._col('TOTAL', 12, true) || E'\n'
+        || repeat('-', 40) || E'\n' || v_linhas;
+    end if;
+
+    -- CRAFT
+    select string_agg((e->>'nome') || ' ' || public._num((e->>'quantidade')::numeric), ' · ' order by ord)
+      into v_linhas
+      from jsonb_array_elements(coalesce(r->'craft', '[]')) with ordinality t (e, ord) where ord <= 15;
+    if v_linhas is not null then
+      v_tab := v_tab || E'\n\n' || 'CRAFT: ' || v_linhas;
+    end if;
   else
-    -- 2. Ranking de vendedores
-    select max((e->>'total')::numeric) into v_max from jsonb_array_elements(r->'por_vendedor') e;
-    select string_agg(public._medalha(ord) || ' **' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'total')::numeric)
-                      || E'\n' || '`' || public._barra((e->>'total')::numeric, v_max) || '` ' || (e->>'quantidade')
-                      || ' venda' || case when (e->>'quantidade')::int = 1 then '' else 's' end, E'\n' order by ord)
-      into v_txt
-      from jsonb_array_elements(r->'por_vendedor') with ordinality t (e, ord) where ord <= 10;
-    v_embeds := v_embeds || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
-      'title', '🏆 Ranking de vendedores',
-      'description', left(v_txt, 1500),
-      'color', 15844367,
-      'thumbnail', case when coalesce(r->'por_vendedor'->0->>'avatar', '') ~ '^https://' then jsonb_build_object('url', r->'por_vendedor'->0->>'avatar') end)));
-
-    -- 3. Pagamento das comissões (com o ID para pagamento)
-    select count(*) filter (where (e->>'pendente')::numeric <= 0), count(*), coalesce(sum((e->>'pendente')::numeric), 0)
-      into v_pagos, v_com, v_pend
-      from jsonb_array_elements(r->'por_vendedor') e where (e->>'comissao')::numeric > 0;
-    if v_com > 0 then
-      select string_agg(case when (e->>'pendente')::numeric <= 0 then '✅' else '⏳' end
-                        || ' **' || (e->>'nome') || '** — ' || public._formatar_valor((e->>'comissao')::numeric)
-                        || coalesce(' · ID `' || nullif(e->>'id_pagamento', '') || '`', '')
-                        || case when (e->>'pendente')::numeric > 0 and coalesce((e->>'pago')::numeric, 0) > 0
-                                then ' · falta ' || public._formatar_valor((e->>'pendente')::numeric) else '' end,
-                        E'\n' order by ord)
-        into v_txt
-        from jsonb_array_elements(r->'por_vendedor') with ordinality t (e, ord)
-        where (e->>'comissao')::numeric > 0 and ord <= 15;
-      v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
-        'title', '💸 Pagamento das comissões',
-        'description', left(v_txt, 1500),
-        'color', case when v_pend <= 0 then 3066993 else 15105570 end,
-        'footer', jsonb_build_object('text', v_pagos || ' de ' || v_com || ' pago' || case when v_com = 1 then '' else 's' end
-                  || case when v_pend > 0 then ' · falta pagar ' || public._formatar_valor(v_pend) else ' · tudo pago ✔' end)));
-    end if;
-
-    -- 4. Parcerias
-    select max((e->>'total')::numeric) into v_max from jsonb_array_elements(r->'por_parceria') e;
-    select string_agg(case when e->>'nome' like 'Pista%' then '🛣️' else '🤝' end || ' **' || (e->>'nome') || '** — '
-                      || public._formatar_valor((e->>'total')::numeric) || ' · ' || (e->>'quantidade') || ' venda'
-                      || case when (e->>'quantidade')::int = 1 then '' else 's' end
-                      || E'\n' || '`' || public._barra((e->>'total')::numeric, v_max) || '`', E'\n' order by ord)
-      into v_txt
-      from jsonb_array_elements(r->'por_parceria') with ordinality t (e, ord) where ord <= 10;
-    v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
-      'title', '🤝 Vendas por parceria', 'description', left(coalesce(v_txt, '—'), 1200), 'color', 3447003));
-
-    -- 5. Os 3 produtos mais vendidos, cada um com a imagem do site
-    for x, v_ord in select e, ord from jsonb_array_elements(r->'por_produto') with ordinality t (e, ord) where ord <= 3 loop
-      v_embeds := v_embeds || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
-        'title', public._medalha(v_ord) || ' ' || coalesce((x->>'icone') || ' ', '') || (x->>'nome'),
-        'description', '**' || replace(to_char((x->>'quantidade')::numeric, 'FM999G999G990'), ',', '.') || '** unidades · **'
-                       || public._formatar_valor((x->>'total')::numeric) || '**'
-                       || coalesce(E'\n🔧 ' || (select string_agg((m->>'quantidade') || ' ' || (m->>'nome'), ' · ')
-                                                 from jsonb_array_elements(coalesce(x->'craft', '[]')) m), ''),
-        'color', 10181046,
-        'thumbnail', case when public._url_imagem(x->>'imagem') is not null then jsonb_build_object('url', public._url_imagem(x->>'imagem')) end)));
-    end loop;
-
-    -- 6. Demais produtos
-    select string_agg(coalesce((e->>'icone') || ' ', '') || '**' || (e->>'nome') || '** ×' || (e->>'quantidade')
-                      || ' — ' || public._formatar_valor((e->>'total')::numeric), E'\n' order by ord)
-      into v_txt
-      from jsonb_array_elements(r->'por_produto') with ordinality t (e, ord) where ord between 4 and 15;
-    if v_txt is not null then
-      v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
-        'title', '📦 Demais produtos', 'description', left(v_txt, 1000), 'color', 10181046));
-    end if;
-
-    -- 7. Craft usado
-    if jsonb_array_length(coalesce(r->'craft', '[]')) > 0 then
-      v_embeds := v_embeds || jsonb_build_array(jsonb_build_object(
-        'title', '🔧 Materiais de craft usados',
-        'color', 9807270,
-        'fields', (select jsonb_agg(public._campo(e->>'nome', '**' || replace(to_char((e->>'quantidade')::numeric, 'FM999G999G990'), ',', '.') || '**') order by ord)
-                   from jsonb_array_elements(r->'craft') with ordinality t (e, ord) where ord <= 12)));
-    end if;
+    v_tab := v_tab || E'\n\n' || 'Nenhuma venda registrada nesta semana.';
   end if;
 
-  -- Rodapé e horário no último embed.
-  v_embeds := jsonb_set(v_embeds, array[(jsonb_array_length(v_embeds) - 1)::text],
-    v_embeds->(jsonb_array_length(v_embeds) - 1) || jsonb_build_object(
-      'footer', jsonb_build_object('text', coalesce(v_embeds->(jsonb_array_length(v_embeds) - 1)->'footer'->>'text' || ' · ', '')
-                                           || 'Calculadora ' || c.nome_organizacao, 'icon_url', v_logo),
-      'timestamp', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')));
+  v_txt := '**Semana de ' || to_char(v_ini, 'DD/MM') || ' a ' || to_char(v_fim, 'DD/MM/YYYY') || '**' || v_var
+           || E'\n' || 'Valores em ' || coalesce(nullif(v_moeda, ''), 'R$') || E'\n'
+           || '```' || E'\n' || left(v_tab, 3800) || E'\n' || '```';
 
   return jsonb_strip_nulls(jsonb_build_object(
     'username', c.nome_organizacao || ' — Relatórios',
     'avatar_url', v_logo,
     'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb),
     'content', case when p_simulado then '🧪 **Simulação do relatório semanal** — dados fictícios, só para aprovar o visual.' end,
-    'embeds', v_embeds));
+    'embeds', jsonb_build_array(jsonb_build_object(
+      'author', jsonb_build_object('name', c.nome_organizacao, 'icon_url', v_logo),
+      'title', '📊 Relatório semanal' || case when p_simulado then ' (simulação)' else '' end,
+      'description', v_txt,
+      'color', 2001125,
+      'thumbnail', jsonb_build_object('url', v_logo),
+      'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao, 'icon_url', v_logo),
+      'timestamp', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')))));
 end;
 $$;
 
@@ -1799,7 +1785,8 @@ declare
   v_vend jsonb;
   r jsonb;
 begin
-  if not (public._e_dev() or public._e_lider()) then
+  -- (sem usuário = SQL Editor do Supabase; pelo site, só DEV ou líder)
+  if auth.uid() is not null and not (public._e_dev() or public._e_lider()) then
     raise exception 'Só o DEV ou o líder podem enviar a simulação.';
   end if;
   select * into c from public.configuracoes where id = 1;
