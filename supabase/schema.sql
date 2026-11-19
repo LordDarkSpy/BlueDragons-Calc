@@ -1075,6 +1075,7 @@ language plpgsql volatile security definer
 set search_path = public
 as $$
 declare
+  v_itens_embeds jsonb;
   c public.configuracoes;
   v public.vendas;
   v_discord text;
@@ -1095,6 +1096,21 @@ begin
     into v_itens
     from public.venda_itens where venda_id = v.id;
 
+  -- Um bloco por item com a imagem do produto (até 9; o resto vai junto no último).
+  select coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+           'color', case when v.com_parceria then 3447003 else 2001125 end,
+           'author', jsonb_build_object(
+             'name', left(x.quantidade || 'x ' || x.produto_nome || ' — ' || public._formatar_valor(x.subtotal), 256),
+             'icon_url', public._url_imagem(x.imagem)),
+           'description', case when x.ord = 9 and x.total_itens > 9
+             then '+ ' || (x.total_itens - 9) || ' item(ns) — ver a venda no site' end)) order by x.ord), '[]'::jsonb)
+    into v_itens_embeds
+    from (select i.quantidade, i.produto_nome, i.subtotal, coalesce(pr.imagem, '') as imagem,
+                 row_number() over (order by i.id) as ord, count(*) over () as total_itens
+          from public.venda_itens i left join public.produtos pr on pr.id = i.produto_id
+          where i.venda_id = v.id) x
+    where x.ord <= 9;
+
   v_campos := jsonb_build_array(
     jsonb_build_object('name', '👤 Vendedor', 'value', v.vendedor_nome, 'inline', true),
     jsonb_build_object('name', '🏷️ Tipo de venda', 'value',
@@ -1105,7 +1121,6 @@ begin
       'value', coalesce(v.cliente, v.parceria_nome), 'inline', true);
   end if;
   v_campos := v_campos || jsonb_build_array(
-    jsonb_build_object('name', 'Itens', 'value', left(coalesce(v_itens, '—'), 1024)),
     jsonb_build_object('name', 'Total', 'value', '**' || public._formatar_valor(v.total) || '**', 'inline', true),
     jsonb_build_object('name', 'Comissão', 'value', public._formatar_valor(v.comissao), 'inline', true)
   );
@@ -1120,13 +1135,10 @@ begin
       'title', '🐉 Venda #' || v.numero,
       'color', case when v.com_parceria then 3447003 else 2001125 end,
       'fields', v_campos,
-      -- imagem do item de maior valor da venda
-      'thumbnail', (select jsonb_build_object('url', public._url_imagem(pr.imagem))
-                    from public.venda_itens i join public.produtos pr on pr.id = i.produto_id
-                    where i.venda_id = v.id and pr.imagem is not null order by i.subtotal desc limit 1),
+      'thumbnail', jsonb_build_object('url', public._url_imagem('img/logo.png')),
       'footer', jsonb_build_object('text', 'Calculadora ' || c.nome_organizacao, 'icon_url', public._url_imagem('img/logo.png')),
       'timestamp', to_char(v.criado_em at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-    )))
+    ))) || v_itens_embeds
   );
 
   -- Marca o vendedor (em spoiler, discreto) se ele tiver ID do Discord.
