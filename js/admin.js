@@ -23,23 +23,46 @@
       { id: 'ver_painel', nome: '⚙️ Painel (entrar)' },
     ] },
     { grupo: 'Abas do painel', dica: 'Só valem com "Painel" marcado.', itens: [
-      { id: 'ver_relatorio', nome: '📊 Relatório semanal' },
-      { id: 'ver_usuarios', nome: '👤 Usuários' },
-      { id: 'ver_parcerias', nome: '🤝 Parcerias' },
-      { id: 'ver_produtos', nome: '📦 Produtos' },
-      { id: 'ver_gestao', nome: '🛡️ Gestão (só ver)' },
+      { id: 'ver_relatorio', nome: '📊 Relatório semanal', requer: 'ver_painel' },
+      { id: 'ver_usuarios', nome: '👤 Usuários', requer: 'ver_painel' },
+      { id: 'ver_parcerias', nome: '🤝 Parcerias', requer: 'ver_painel' },
+      { id: 'ver_produtos', nome: '📦 Produtos', requer: 'ver_painel' },
+      { id: 'ver_gestao', nome: '🛡️ Gestão (só ver)', requer: 'ver_painel' },
     ] },
     { grupo: 'Ações', itens: [
-      { id: 'registrar_venda', nome: '🛒 Realizar vendas (sem isto, a calculadora só simula)' },
-      { id: 'editar_parcerias', nome: 'Cadastrar e editar parcerias' },
-      { id: 'encerrar_parceria', nome: 'Encerrar / reativar parcerias' },
-      { id: 'registrar_pagamento', nome: 'Registrar pagamentos' },
-      { id: 'cancelar_venda', nome: 'Cancelar / reativar vendas' },
-      { id: 'gerenciar_vendedores', nome: 'Cadastrar e editar usuários' },
-      { id: 'gerenciar_produtos', nome: 'Cadastrar e editar produtos e preços' },
-      { id: 'enviar_notificacoes', nome: '📢 Enviar notificações (aba Gestão)' },
+      { id: 'registrar_venda', nome: '🛒 Realizar vendas (sem isto, a calculadora só simula)', requer: 'ver_calculadora' },
+      { id: 'editar_parcerias', nome: 'Cadastrar e editar parcerias', requer: 'ver_parcerias' },
+      { id: 'encerrar_parceria', nome: 'Encerrar / reativar parcerias', requer: 'ver_parcerias' },
+      { id: 'registrar_pagamento', nome: 'Registrar pagamentos', requer: 'ver_relatorio' },
+      { id: 'cancelar_venda', nome: 'Cancelar / reativar vendas', requer: 'ver_vendas' },
+      { id: 'gerenciar_vendedores', nome: 'Cadastrar e editar usuários', requer: 'ver_usuarios' },
+      { id: 'gerenciar_produtos', nome: 'Cadastrar e editar produtos e preços', requer: 'ver_produtos' },
+      { id: 'enviar_notificacoes', nome: '📢 Enviar notificações (aba Gestão)', requer: 'ver_gestao' },
     ] },
   ];
+  // Cada permissão com "requer" só pode ser marcada quando a outra estiver marcada (ex.: Gestão precisa do Painel).
+  const PERMISSAO_INFO = Object.fromEntries(PERMISSOES.flatMap((g) => g.itens).map((i) => [i.id, i]));
+
+  // Desmarca e trava (meio apagadas) as permissões cujo requisito não está marcado. Repete até estabilizar,
+  // porque desmarcar uma pode travar outras (Painel → Gestão → Enviar notificações).
+  function aplicarRequisitos(card, leitura) {
+    let mudou = true;
+    while (mudou) {
+      mudou = false;
+      card.querySelectorAll('[data-permissao]').forEach((caixa) => {
+        const req = PERMISSAO_INFO[caixa.dataset.permissao]?.requer;
+        if (!req) return;
+        const pai = card.querySelector(`[data-permissao="${req}"]`);
+        const liberada = !!(pai && pai.checked);
+        if (!liberada && caixa.checked) { caixa.checked = false; mudou = true; }
+        caixa.disabled = leitura || !liberada;
+        const rotulo = caixa.closest('label');
+        rotulo.classList.toggle('permissao-bloqueada', !liberada);
+        rotulo.title = liberada ? '' : `Marque antes: ${PERMISSAO_INFO[req].nome}`;
+      });
+    }
+  }
+
   // Permissão que cada aba exige (a do Discord é só do DEV).
   const ABA_PERMISSAO = { relatorio: 'ver_relatorio', vendedores: 'ver_usuarios', parcerias: 'ver_parcerias', produtos: 'ver_produtos', gestao: 'ver_gestao' };
 
@@ -1312,6 +1335,7 @@
     prepararNotificacao();
     ['permissoes-salvar', 'perfil-novo', 'cfg-carregar-cargos', 'cfg-simulado'].forEach((id) => { $(id).hidden = leitura; });
     el.querySelectorAll('[data-remover-perfil]').forEach((btn) => { btn.hidden = leitura; });
+    el.querySelectorAll('[data-perfil]').forEach((card) => aplicarRequisitos(card, leitura));
   }
 
   // ---------------------------------------------------------------- enviar notificação (geral, cargo ou usuário)
@@ -1368,7 +1392,13 @@
     const el = $('perfis-lista');
     if (el.querySelector('.vazio')) el.innerHTML = '';
     el.insertAdjacentHTML('beforeend', cartaoPerfil({ id: `novo-${++novoPerfilSeq}`, nome: '', permissoes: ['ver_calculadora'], cargos: [] }));
+    aplicarRequisitos(el.lastElementChild, false);
     el.lastElementChild.querySelector('.perfil-nome').focus();
+  });
+
+  $('perfis-lista').addEventListener('change', (e) => {
+    if (!e.target.matches('[data-permissao]')) return;
+    aplicarRequisitos(e.target.closest('[data-perfil]'), !meuPerfil.lider);
   });
 
   $('perfis-lista').addEventListener('click', (e) => {

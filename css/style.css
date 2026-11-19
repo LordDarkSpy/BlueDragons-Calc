@@ -1084,6 +1084,8 @@ button.item-icone.tem-dica:focus-visible .balao-dica { display: block; }
 .perfil-grupo { display: flex; flex-direction: column; }
 .perfil-grupo > strong { margin-top: 6px; font-size: 0.85rem; color: var(--azul-claro); }
 .perfil-grupo .checkbox { margin-top: 6px; font-size: 0.86rem; }
+.perfil-grupo .checkbox.permissao-bloqueada { opacity: .4; cursor: not-allowed; }
+.perfil-grupo .checkbox.permissao-bloqueada input { cursor: not-allowed; }
 .perfil-cargos { margin-top: 10px; }
 .perfil-cargos summary { cursor: pointer; font-size: 0.86rem; font-weight: 600; }
 
