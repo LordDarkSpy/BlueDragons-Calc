@@ -310,13 +310,14 @@
       <div class="aviso-troca">
         <strong>⚠️ Ao trocar de servidor:</strong>
         <ul>
-          <li>os nomes, fotos e cargos dos usuários passam a vir do novo servidor;</li>
-          <li>os cargos ligados aos perfis eram do servidor antigo e precisam ser escolhidos de novo na aba Gestão;</li>
+          <li><strong>todo o histórico de vendas é apagado</strong> (ranking, relatórios e comissões recomeçam do zero), junto com os pagamentos registrados — não dá para desfazer;</li>
+          <li>os webhooks de vendas, relatórios e pagamentos são apagados (cadastre os canais do novo servidor);</li>
           <li>a categoria do fórum de parceiros é desligada (configure a do novo servidor);</li>
-          <li>os webhooks continuam os mesmos (troque-os se os canais mudaram).</li>
+          <li>os cargos ligados aos perfis eram do servidor antigo e precisam ser escolhidos de novo na aba Gestão;</li>
+          <li>ficam: produtos, parcerias, usuários e perfis. Nomes, fotos e cargos passam a vir do novo servidor.</li>
         </ul>
       </div>
-      <label class="checkbox"><input id="servidor-confirmo" type="checkbox"> Entendi e quero trocar de servidor</label>
+      <label class="checkbox"><input id="servidor-confirmo" type="checkbox"> Entendi que as vendas e os webhooks serão apagados e quero trocar de servidor</label>
       <p id="servidor-erro" class="status erro" hidden></p>
       <button id="servidor-confirmar" type="submit" class="botao-perigo botao-bloco">Confirmar troca de servidor</button>
       <button type="button" class="botao-secundario botao-bloco" data-fechar-servidor>Cancelar</button>

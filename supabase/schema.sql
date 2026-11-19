@@ -699,8 +699,13 @@ begin
     raise exception 'Só o líder pode alterar a gestão de acessos e permissões.';
   end if;
 
-  -- Troca de servidor: cargos, fóruns e posts eram do servidor antigo.
+  -- Troca de servidor: recomeça do zero. Apaga as vendas (ranking e relatórios saem delas), os pagamentos,
+  -- os webhooks e tudo do Discord antigo. Ficam produtos, parcerias, usuários e perfis.
   if new.discord_servidor_id is distinct from old.discord_servidor_id then
+    truncate public.venda_itens, public.vendas, public.pagamentos restart identity;
+    new.webhook_vendas := null;
+    new.webhook_relatorios := null;
+    new.webhook_pagamentos := null;
     delete from public.discord_cargos where true;
     delete from public.discord_foruns where true;
     delete from public.discord_posts where true;
@@ -2396,7 +2401,8 @@ begin
     return jsonb_build_object('ativo', true, 'erro', (select valor from public.discord_estado where chave = 'erro'));
   end if;
 
-  -- 1. Canais do servidor: confere a categoria, adota fóruns criados à mão e esquece os apagados.
+  -- 1. Canais do servidor: confere a categoria e esquece os fóruns apagados. Só adota fóruns que o próprio bot
+  --    criou (marcados no tópico); canais criados à mão na categoria nunca são alterados.
   select x.status, x.corpo into s, b from public._discord_api('GET', '/guilds/' || v_srv || '/channels') x;
   v_feitos := v_feitos + 1;
   if s <> 200 or jsonb_typeof(b) <> 'array' then return public._forum_erro(s, b); end if;
@@ -2410,6 +2416,7 @@ begin
   select distinct on (public._chave_produto(e->>'name')) public._chave_produto(e->>'name'), e->>'name', e->>'id'
   from jsonb_array_elements(b) e
   where (e->>'type')::int = 15 and e->>'parent_id' = v_cat and public._chave_produto(e->>'name') <> ''
+    and coalesce(e->>'topic', '') like '%Atualizado automaticamente pela calculadora.%'
   order by public._chave_produto(e->>'name'), (e->>'position')::int
   on conflict (chave) do update set canal_id = excluded.canal_id, nome = excluded.nome, atualizado_em = now()
     where public.discord_foruns.canal_id is null;
