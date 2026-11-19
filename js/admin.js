@@ -1468,7 +1468,7 @@
     $('cfg-moeda').value = data.moeda;
     $('cfg-comissao').value = Math.round(Number(data.percentual_comissao) * 1000) / 10;
     $('cfg-servidor').value = data.discord_servidor_id || '';
-    if (meuPerfil.dev) { atualizarStatusBot(); atualizarStatusForum(); }
+    if (meuPerfil.dev) { atualizarStatusBot().then(carregarAparenciaBot); atualizarStatusForum(); }
     BD.moeda = data.moeda || BD.moeda;
   }
 
@@ -1519,6 +1519,90 @@
     $('cfg-convite').hidden = !link;
     $('cfg-convite-link').href = link || '#';
   }
+
+  // ---------------------------------------------------------------- aparência do bot no servidor
+
+  let fotoBot = null; // data:image/… escolhida e ainda não aplicada
+
+  function mostrarAparenciaBot(a) {
+    $('bot-foto').src = a.foto_servidor || a.foto_padrao;
+    $('bot-nome').value = a.apelido || '';
+    $('bot-nome').placeholder = a.usuario || 'Nome do bot';
+    $('bot-status').textContent = `Aparece como ${a.apelido || a.usuario}` + (a.foto_servidor ? ' · foto própria do servidor' : ' · foto padrão do bot');
+  }
+
+  async function carregarAparenciaBot() {
+    if (!configAtual.discord_servidor_id || !statusBot.bot_configurado) {
+      $('bot-status').textContent = 'Salve o token do bot e configure o servidor primeiro.';
+      return;
+    }
+    const { data, error } = await db.rpc('bot_aparencia');
+    if (error) { $('bot-status').textContent = '⚠️ ' + BD.mensagemErro(error); return; }
+    mostrarAparenciaBot(data);
+  }
+
+  // Recorta em quadrado e reduz para 512×512 (o Discord aceita até 10 MB, mas a imagem passa pelo banco).
+  function prepararFotoBot(arquivo) {
+    return new Promise((ok, erro) => {
+      if (arquivo.type === 'image/gif' && arquivo.size <= 1000000) {
+        const r = new FileReader();
+        r.onload = () => ok(r.result); // GIF pequeno vai como está, para manter a animação
+        r.onerror = () => erro(new Error('Não deu para ler a imagem.'));
+        r.readAsDataURL(arquivo);
+        return;
+      }
+      const img = new Image();
+      const url = URL.createObjectURL(arquivo);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const lado = Math.min(img.naturalWidth, img.naturalHeight);
+        const c = document.createElement('canvas');
+        c.width = c.height = Math.min(512, lado);
+        c.getContext('2d').drawImage(img, (img.naturalWidth - lado) / 2, (img.naturalHeight - lado) / 2, lado, lado, 0, 0, c.width, c.height);
+        let dados = c.toDataURL('image/png');
+        if (dados.length > 1300000) dados = c.toDataURL('image/jpeg', 0.9);
+        ok(dados);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); erro(new Error('Não deu para abrir a imagem.')); };
+      img.src = url;
+    });
+  }
+
+  $('bot-foto-arquivo').addEventListener('change', async (e) => {
+    const arquivo = e.target.files[0];
+    fotoBot = null;
+    if (!arquivo) return;
+    try {
+      fotoBot = await prepararFotoBot(arquivo);
+      $('bot-foto').src = fotoBot;
+      $('bot-foto-remover').checked = false;
+      $('bot-status').textContent = 'Prévia da foto nova. Clique em Aplicar no servidor.';
+    } catch (err) {
+      e.target.value = '';
+      BD.toast(err.message, 'erro');
+    }
+  });
+
+  $('bot-foto-remover').addEventListener('change', (e) => {
+    if (e.target.checked) { fotoBot = null; $('bot-foto-arquivo').value = ''; }
+  });
+
+  $('bot-aplicar').addEventListener('click', async () => {
+    const botao = $('bot-aplicar');
+    botao.disabled = true;
+    const { data, error } = await db.rpc('bot_aparencia_salvar', {
+      p_nome: $('bot-nome').value.trim(),
+      p_foto: fotoBot,
+      p_remover_foto: $('bot-foto-remover').checked,
+    });
+    botao.disabled = false;
+    if (error) return BD.toast(BD.mensagemErro(error), 'erro');
+    fotoBot = null;
+    $('bot-foto-arquivo').value = '';
+    $('bot-foto-remover').checked = false;
+    mostrarAparenciaBot(data);
+    BD.toast('Aparência do bot atualizada no servidor.', 'ok');
+  });
 
   $('cfg-convite-copiar').addEventListener('click', () => {
     const link = linkConvite(configAtual.discord_servidor_id);

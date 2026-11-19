@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=21">
+<link rel="stylesheet" href="css/style.css?v=22">
 </head>
 <body>
 
@@ -223,6 +223,23 @@
           </div>
         </div>
 
+        <h2 style="margin-top:22px">Aparência do bot no servidor</h2>
+        <p class="dica">Nome e foto com que o bot aparece <strong>só neste servidor</strong> (lista de membros e posts do fórum). Os avisos de vendas, relatórios e pagamentos saem pelos webhooks, com o nome da organização e a logo.</p>
+        <div class="bot-aparencia">
+          <img id="bot-foto" class="bot-foto" src="https://cdn.discordapp.com/embed/avatars/0.png" alt="Foto atual do bot" width="72" height="72">
+          <div class="bot-aparencia-campos">
+            <label class="rotulo" for="bot-nome">Nome no servidor <span class="opcional">(vazio = nome do bot)</span></label>
+            <input id="bot-nome" type="text" maxlength="32" autocomplete="off" placeholder="Ex.: Blue Dragons">
+            <label class="rotulo" for="bot-foto-arquivo">Foto <span class="opcional">(PNG, JPG ou GIF; é recortada em quadrado)</span></label>
+            <input id="bot-foto-arquivo" type="file" accept="image/png,image/jpeg,image/gif">
+            <label class="checkbox"><input id="bot-foto-remover" type="checkbox"> Voltar à foto padrão do bot</label>
+          </div>
+        </div>
+        <div class="barra-ferramentas" style="margin-top:10px">
+          <button id="bot-aplicar" type="button" class="botao">🤖 Aplicar no servidor</button>
+          <span id="bot-status" class="dica"></span>
+        </div>
+
         <h2 style="margin-top:22px">Fórum de parceiros</h2>
         <p class="dica">Dentro da categoria escolhida, o bot cria um <strong>fórum para cada produto</strong> que as parcerias vendem (ex.: arma, munição) e mantém <strong>um post por parceria</strong>. O post é atualizado quando a parceria muda e sai quando ela é encerrada. Para pegar o ID: botão direito na categoria → Copiar ID do canal.</p>
         <label class="rotulo" for="cfg-categoria">ID da categoria de parceiros <span class="opcional">(vazio = desligado)</span></label>
@@ -393,6 +410,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=8"></script>
-<script src="js/admin.js?v=22"></script>
+<script src="js/admin.js?v=23"></script>
 </body>
 </html>

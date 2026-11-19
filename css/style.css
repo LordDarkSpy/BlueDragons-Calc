@@ -1097,4 +1097,7 @@ button.item-icone.tem-dica:focus-visible .balao-dica { display: block; }
 .aviso-troca ul { margin: 6px 0 0; padding-left: 18px; }
 .convite-bot { margin-top: 8px; }
 .convite-bot .barra-ferramentas { margin-top: 6px; }
+.bot-aparencia { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.bot-foto { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; flex: none; background: rgba(255,255,255,.06); }
+.bot-aparencia-campos { flex: 1; min-width: 220px; }
 a.botao-discord { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; border-radius: 8px; }

@@ -2948,6 +2948,100 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
+-- Aparência do bot no servidor: apelido e foto só deste servidor
+-- (o perfil global do bot, no Developer Portal, continua igual).
+-- -----------------------------------------------------------------------------
+
+create or replace function public._bot_aparencia_json(p_srv text, m jsonb)
+returns jsonb
+language sql immutable
+as $f$
+  select jsonb_build_object(
+    'id', m->'user'->>'id',
+    'usuario', coalesce(m->'user'->>'global_name', m->'user'->>'username'),
+    'apelido', m->>'nick',
+    'foto_servidor', case when m->>'avatar' is not null then
+      'https://cdn.discordapp.com/guilds/' || p_srv || '/users/' || (m->'user'->>'id') || '/avatars/' || (m->>'avatar') || '.png?size=256' end,
+    'foto_padrao', case when m->'user'->>'avatar' is not null then
+      'https://cdn.discordapp.com/avatars/' || (m->'user'->>'id') || '/' || (m->'user'->>'avatar') || '.png?size=256'
+      else 'https://cdn.discordapp.com/embed/avatars/0.png' end
+  );
+$f$;
+
+create or replace function public._bot_servidor()
+returns text
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  v_srv text := (select discord_servidor_id from public.configuracoes where id = 1);
+begin
+  if not public._e_dev() then raise exception 'Só o DEV pode configurar o Discord.'; end if;
+  if public._token_bot() is null then raise exception 'Salve o token do bot primeiro.'; end if;
+  if v_srv is null then raise exception 'Configure o servidor do Discord primeiro.'; end if;
+  if not exists (select 1 from pg_extension where extname = 'http') then
+    raise exception 'Ative a extensão http no Supabase (Database → Extensions).';
+  end if;
+  return v_srv;
+end;
+$$;
+
+-- Como o bot aparece hoje no servidor.
+create or replace function public.bot_aparencia()
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_srv text := public._bot_servidor();
+  s int;
+  b jsonb;
+begin
+  select a.status, a.corpo into s, b from public._discord_api('GET', '/users/@me') a;
+  if s <> 200 then raise exception '%', public._discord_msg_erro(s, b); end if;
+  select a.status, a.corpo into s, b from public._discord_api('GET', '/guilds/' || v_srv || '/members/' || (b->>'id')) a;
+  if s = 404 then raise exception 'O bot ainda não está no servidor. Abra o link de convite e adicione o bot.'; end if;
+  if s <> 200 then raise exception '%', public._discord_msg_erro(s, b); end if;
+  return public._bot_aparencia_json(v_srv, b);
+end;
+$$;
+
+-- Troca o apelido e/ou a foto do bot no servidor.
+-- p_nome vazio = volta ao nome do bot; p_foto = data:image/…;base64 (null = mantém); p_remover_foto = volta à foto do bot.
+create or replace function public.bot_aparencia_salvar(p_nome text, p_foto text default null, p_remover_foto boolean default false)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_srv text := public._bot_servidor();
+  v_nome text := nullif(trim(coalesce(p_nome, '')), '');
+  v_corpo jsonb;
+  s int;
+  b jsonb;
+begin
+  if char_length(v_nome) > 32 then raise exception 'O nome do bot pode ter até 32 caracteres.'; end if;
+  v_corpo := jsonb_build_object('nick', v_nome);
+  if p_remover_foto then
+    v_corpo := v_corpo || jsonb_build_object('avatar', null);
+  elsif p_foto is not null then
+    if length(p_foto) > 1400000 then raise exception 'A imagem passa de 1 MB. Use uma imagem menor.'; end if;
+    if p_foto !~ '^data:image/(png|jpeg|gif);base64,[A-Za-z0-9+/=]+$' then
+      raise exception 'Imagem inválida: use PNG, JPG ou GIF.';
+    end if;
+    v_corpo := v_corpo || jsonb_build_object('avatar', p_foto);
+  end if;
+  select a.status, a.corpo into s, b from public._discord_api('PATCH', '/guilds/' || v_srv || '/members/@me', v_corpo) a;
+  if s = 404 then raise exception 'O bot ainda não está no servidor. Abra o link de convite e adicione o bot.'; end if;
+  if s = 400 and b ? 'errors' then
+    raise exception 'O Discord recusou: %', left(coalesce(b #>> '{errors,nick,_errors,0,message}', b #>> '{errors,avatar,_errors,0,message}', b->>'message'), 200);
+  end if;
+  if s <> 200 then raise exception '%', public._discord_msg_erro(s, b); end if;
+  return public._bot_aparencia_json(v_srv, b);
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
 -- Permissões de execução das funções
 -- -----------------------------------------------------------------------------
 
@@ -2990,6 +3084,8 @@ grant execute on function public.enviar_relatorio_simulado() to authenticated;
 grant execute on function public.forum_sincronizar_agora() to authenticated;
 grant execute on function public.forum_atualizar() to authenticated;
 grant execute on function public.forum_status() to authenticated;
+grant execute on function public.bot_aparencia() to authenticated;
+grant execute on function public.bot_aparencia_salvar(text, text, boolean) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Agendamentos
