@@ -70,10 +70,11 @@
   async function carregarBase() {
     const [filtros, prod, cfg] = await Promise.all([
       db.rpc('vendas_filtros'),
-      db.from('produtos').select('id, nome, icone, imagem'),
-      db.from('configuracoes').select('moeda').eq('id', 1).maybeSingle(),
+      db.from('produtos').select('id, nome, icone, imagem, ativo, preco_com_parceria, preco_sem_parceria'),
+      db.from('configuracoes').select('moeda, percentual_comissao').eq('id', 1).maybeSingle(),
     ]);
     if (cfg.data && cfg.data.moeda) BD.moeda = cfg.data.moeda;
+    if (cfg.data && cfg.data.percentual_comissao != null) percentualComissao = Number(cfg.data.percentual_comissao);
     produtos = prod.data || [];
     const f = filtros.data || { vendedores: [], parcerias: [] };
     $('vendas-vendedor').innerHTML = '<option value="">Todos</option>'
@@ -163,20 +164,38 @@
     abrirRefazer(botao.dataset.reativar);
   });
 
-  // Reativar não é permitido: explica o motivo e oferece refazer a venda na semana atual.
+  // Reativar não é permitido: explica o motivo e oferece refazer a venda na semana atual (com os preços atuais).
   let vendaRefazendo = null;
+  let percentualComissao = 0.15;
   function abrirRefazer(id) {
     const v = vendas.find((x) => x.id === id);
     if (!v) return;
     vendaRefazendo = v;
     $('refazer-titulo').textContent = `Reativar venda #${v.numero}`;
+    // Prévia com os preços de hoje (o banco recalcula de novo ao refazer).
+    let total = 0;
+    let comissao = 0;
+    const fora = [];
+    const linhas = v.venda_itens.map((i) => {
+      const p = produtos.find((x) => x.id === i.produto_id);
+      if (!p || !p.ativo) { fora.push(i.produto_nome); return `<li>${BD.iconeProduto(produtoDoItem(i), 'chip-img')} ${esc(i.produto_nome)} x${i.quantidade} — <span class="status erro">fora da calculadora</span></li>`; }
+      const preco = Number(v.com_parceria ? p.preco_com_parceria : p.preco_sem_parceria);
+      const sub = i.quantidade * preco;
+      total += sub;
+      comissao += Math.round(i.quantidade * Number(p.preco_com_parceria) * percentualComissao * 100) / 100;
+      const mudou = Math.abs(sub - Number(i.subtotal)) > 0.004;
+      return `<li>${BD.iconeProduto(p, 'chip-img')} ${esc(p.nome)} x${i.quantidade} — ${mudou ? `<s>${formatarValor(i.subtotal)}</s> → ` : ''}<strong>${formatarValor(sub)}</strong></li>`;
+    });
+    const totalMudou = !fora.length && Math.abs(total - Number(v.total)) > 0.004;
     $('refazer-resumo').innerHTML = `
       <p><strong>${esc(v.vendedor_nome)}</strong> · ${v.com_parceria ? 'Parceria' : 'Pista'}${v.cliente || v.parceria_nome ? ' · ' + esc(v.cliente || v.parceria_nome) : ''}</p>
-      <ul class="itens-venda">${v.venda_itens.map((i) => `<li>${BD.iconeProduto(produtoDoItem(i), 'chip-img')} ${esc(i.produto_nome)} x${i.quantidade} — ${formatarValor(i.subtotal)}</li>`).join('')}</ul>
-      <p>Total <strong>${formatarValor(v.total)}</strong> · Comissão ${formatarValor(v.comissao)}</p>
+      <ul class="itens-venda">${linhas.join('')}</ul>
+      ${fora.length
+        ? `<p class="status erro">Não dá para refazer: ${esc(fora.join(', '))} não está(ão) mais à venda na calculadora.</p>`
+        : `<p>Total ${totalMudou ? `<s>${formatarValor(v.total)}</s> → ` : ''}<strong>${formatarValor(total)}</strong> · Comissão ${formatarValor(comissao)}</p>`}
       <p class="dica">Feita em ${esc(BD.dataHoraBR(v.criado_em))}${v.cancelada_motivo ? ' · cancelada: ' + esc(v.cancelada_motivo) : ''}</p>`;
     $('refazer-erro').hidden = true;
-    $('refazer-confirmar').disabled = false;
+    $('refazer-confirmar').disabled = fora.length > 0;
     BD.abrirModal($('modal-refazer'), $('refazer-confirmar'));
   }
 

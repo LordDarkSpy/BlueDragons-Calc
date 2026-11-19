@@ -1443,7 +1443,8 @@ begin
 end;
 $$;
 
--- Registra de novo uma venda cancelada, com os mesmos itens, valores, cliente e vendedor, na data de hoje.
+-- Registra de novo uma venda cancelada na data de hoje: mesmos itens, quantidades, cliente e vendedor,
+-- com os preços, a comissão e o craft atuais da tabela (como uma venda nova).
 create or replace function public.refazer_venda(p_id uuid)
 returns jsonb
 language plpgsql volatile security definer
@@ -1453,6 +1454,11 @@ declare
   v public.vendas;
   v_id uuid;
   v_numero bigint;
+  v_pct numeric := coalesce((select percentual_comissao from public.configuracoes where id = 1), 0.15);
+  v_parceria public.parcerias;
+  v_fora text;
+  v_total numeric(12, 2);
+  v_comissao numeric(12, 2);
 begin
   if not public.tem_permissao('cancelar_venda') then raise exception 'Você não tem permissão para refazer vendas.'; end if;
   select * into v from public.vendas where id = p_id for update;
@@ -1462,20 +1468,43 @@ begin
     raise exception 'A venda #% já foi refeita como venda #%.', v.numero, v.refeita_como_numero;
   end if;
 
+  -- Tudo precisa continuar disponível, como numa venda nova.
+  if v.com_parceria then
+    select * into v_parceria from public.parcerias where id = v.parceria_id and ativo;
+    if v_parceria.id is null then
+      raise exception 'Não dá para refazer: a parceria % não está mais ativa.', coalesce(v.parceria_nome, '');
+    end if;
+  end if;
+  select string_agg(i.produto_nome, ', ' order by i.produto_nome) into v_fora
+  from public.venda_itens i left join public.produtos p on p.id = i.produto_id and p.ativo
+  where i.venda_id = v.id and p.id is null;
+  if v_fora is not null then
+    raise exception 'Não dá para refazer: % não está(ão) mais à venda na calculadora.', v_fora;
+  end if;
+
   insert into public.vendas (vendedor_id, vendedor_nome, parceria_id, parceria_nome, com_parceria, cliente, total, comissao, observacao, refeita_de_numero)
-  values (v.vendedor_id, v.vendedor_nome, v.parceria_id, v.parceria_nome, v.com_parceria, v.cliente, v.total, v.comissao,
-          left(concat_ws(' · ', 'Refeita da venda #' || v.numero || ' por ' || public._nome_logado(), v.observacao), 300), v.numero)
+  values (v.vendedor_id, v.vendedor_nome, v.parceria_id, coalesce(v_parceria.nome, v.parceria_nome), v.com_parceria,
+          case when v.com_parceria then v_parceria.nome else v.cliente end, 0, 0,
+          left(concat_ws(' · ', 'Refeita da venda #' || v.numero || ' por ' || public._nome_logado() || ' (preços atuais)', v.observacao), 300), v.numero)
   returning id, numero into v_id, v_numero;
 
-  insert into public.venda_itens (venda_id, produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal, comissao,
-                                  craft_placa, craft_material, material_nome, craft)
-  select v_id, produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal, comissao,
-         craft_placa, craft_material, material_nome, craft
-  from public.venda_itens where venda_id = v.id order by id;
+  insert into public.venda_itens (venda_id, produto_id, produto_nome, icone, quantidade, preco_unitario, subtotal, comissao, craft)
+  select v_id, p.id, p.nome, p.icone, i.quantidade, x.preco, i.quantidade * x.preco,
+         round(i.quantidade * p.preco_com_parceria * v_pct, 2),
+         coalesce((select jsonb_agg(jsonb_build_object('material', e->>'material', 'quantidade', (e->>'quantidade')::int * i.quantidade))
+                   from jsonb_array_elements(coalesce(p.craft, '[]'::jsonb)) e), '[]'::jsonb)
+  from public.venda_itens i
+  join public.produtos p on p.id = i.produto_id
+  cross join lateral (select case when v.com_parceria then p.preco_com_parceria else p.preco_sem_parceria end as preco) x
+  where i.venda_id = v.id
+  order by p.nome;
+
+  select coalesce(sum(subtotal), 0), coalesce(sum(comissao), 0) into v_total, v_comissao from public.venda_itens where venda_id = v_id;
+  update public.vendas set total = v_total, comissao = v_comissao where id = v_id;
 
   update public.vendas set refeita_como = v_id, refeita_como_numero = v_numero where id = v.id;
   perform public._notificar_venda(v_id);
-  return jsonb_build_object('id', v_id, 'numero', v_numero, 'total', v.total);
+  return jsonb_build_object('id', v_id, 'numero', v_numero, 'total', v_total, 'total_antes', v.total);
 end;
 $$;
 
