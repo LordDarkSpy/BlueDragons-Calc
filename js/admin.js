@@ -1059,7 +1059,6 @@
       ${p.ativo ? '' : `<div class="perfil-encerrada"><strong>Encerrada em ${esc(p.encerrada_em ? BD.dataHoraBR(p.encerrada_em) : '—')}</strong>
         ${p.encerrada_por ? ` por ${esc(p.encerrada_por)}` : ''}<p>Motivo: ${esc(p.encerrada_motivo || '—')}</p></div>`}
       <div class="perfil-acoes">
-        ${p.img_banner && url(p.img_banner) ? `<button type="button" class="botao-primario botao-pequeno" data-ampliar="${esc(url(p.img_banner))}" data-titulo="Tabela de preços">📋 Ver tabela de preços</button>` : ''}
         ${p.img_localizacao && url(p.img_localizacao) ? `<button type="button" class="botao-primario botao-pequeno" data-ampliar="${esc(url(p.img_localizacao))}" data-titulo="Localização">📍 Ver localização</button>` : ''}
         ${pode('editar_parcerias') ? `<button type="button" class="botao botao-pequeno" data-editar-parceria="${esc(p.id)}">✏️ Editar</button>` : ''}
         ${pode('encerrar_parceria') ? (p.ativo
