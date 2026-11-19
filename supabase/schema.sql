@@ -1648,7 +1648,6 @@ begin
     || public._col('Itens vendidos', 22) || public._col(public._num(v_itens), 14, true) || E'\n'
     || public._col('Com parceria', 22) || public._col(public._num((r->>'total_com_parceria')::numeric), 14, true) || E'\n'
     || public._col('Pista', 22) || public._col(public._num((r->>'total_sem_parceria')::numeric), 14, true) || E'\n'
-    || public._col('Ticket médio', 22) || public._col(public._num(case when v_qtd > 0 then v_total / v_qtd end), 14, true) || E'\n'
     || public._col('Comissões (' || v_pct || '%)', 22) || public._col(public._num((r->>'comissao')::numeric), 14, true);
 
   if jsonb_array_length(coalesce(r->'por_vendedor', '[]')) > 0 then
