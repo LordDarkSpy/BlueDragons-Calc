@@ -37,6 +37,7 @@
       { id: 'cancelar_venda', nome: 'Cancelar / reativar vendas' },
       { id: 'gerenciar_vendedores', nome: 'Cadastrar e editar usuários' },
       { id: 'gerenciar_produtos', nome: 'Cadastrar e editar produtos e preços' },
+      { id: 'enviar_notificacoes', nome: '📢 Enviar notificações (aba Gestão)' },
     ] },
   ];
   // Permissão que cada aba exige (a do Discord é só do DEV).
@@ -748,6 +749,42 @@
   $('parcerias-limpar').addEventListener('click', () => { $('parcerias-busca').value = ''; renderizarParcerias(); $('parcerias-busca').focus(); });
   $('parcerias-busca').addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.value) { e.stopPropagation(); e.target.value = ''; renderizarParcerias(); } });
 
+  // ---------------------------------------------------------------- notificar alteração
+  // Depois de mexer em produto ou parceria, o banco guarda o aviso como pendente e aqui a pessoa decide.
+  let pendentesNotificar = [];
+
+  async function perguntarNotificacao() {
+    const { data, error } = await db.rpc('novidades_pendentes');
+    if (error || !Array.isArray(data) || !data.length) return;
+    pendentesNotificar = data;
+    $('notificar-lista').innerHTML = data.map((n) => `
+      <li class="novidade-${esc(n.tipo)}"><span class="novidade-icone" aria-hidden="true">${({ preco: '💲', produto: '📦', parceria: '🤝' })[n.tipo] || '🔔'}</span>
+        <div><strong>${esc(n.titulo)}</strong>${n.descricao ? `<p>${esc(n.descricao)}</p>` : ''}</div></li>`).join('');
+    $('notificar-mensagem').value = '';
+    $('notificar-erro').hidden = true;
+    $('notificar-sim').disabled = $('notificar-nao').disabled = false;
+    BD.abrirModal($('modal-notificar'), $('notificar-sim'));
+  }
+
+  async function decidirNotificacao(notificar) {
+    $('notificar-sim').disabled = $('notificar-nao').disabled = true;
+    const { error } = await db.rpc('decidir_novidades', {
+      p_ids: pendentesNotificar.map((n) => n.id), p_notificar: notificar, p_mensagem: $('notificar-mensagem').value.trim() || null,
+    });
+    if (error) {
+      $('notificar-erro').textContent = BD.mensagemErro(error);
+      $('notificar-erro').hidden = false;
+      $('notificar-sim').disabled = $('notificar-nao').disabled = false;
+      return;
+    }
+    BD.fecharModal($('modal-notificar'));
+    if (notificar) BD.toast('Notificação enviada para todos.', 'ok');
+  }
+
+  $('notificar-sim').addEventListener('click', () => decidirNotificacao(true));
+  $('notificar-nao').addEventListener('click', () => decidirNotificacao(false));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal-notificar').hidden && !$('notificar-nao').disabled) decidirNotificacao(false); });
+
   // Fórum de parceiros no Discord: atualiza logo depois de mudar uma parceria (sem travar a tela).
   function atualizarForum() {
     db.rpc('forum_atualizar').then(() => {}, () => {});
@@ -966,6 +1003,7 @@
       BD.fecharModal($('modal-parceria'));
       BD.toast('Parceria salva.', 'ok');
       atualizarForum();
+      perguntarNotificacao();
       await carregarParcerias();
     } catch (err) {
       erro.textContent = BD.mensagemErro(err);
@@ -1012,6 +1050,7 @@
     BD.fecharModal($('modal-parceria'));
     BD.toast('Parceria encerrada.', 'ok');
     atualizarForum();
+    perguntarNotificacao();
     await carregarParcerias();
     if (!$('modal-perfil').hidden) verParceria(encerrando.id);
   });
@@ -1022,7 +1061,7 @@
     const { error } = await db.rpc('reativar_parceria', { p_id: p.id });
     if (!error) BD.fecharModal($('modal-parceria'));
     BD.toast(error ? BD.mensagemErro(error) : 'Parceria reativada.', error ? 'erro' : 'ok');
-    if (!error) atualizarForum();
+    if (!error) { atualizarForum(); perguntarNotificacao(); }
     await carregarParcerias();
     if (!$('modal-perfil').hidden) verParceria(p.id);
   }
@@ -1195,6 +1234,7 @@
       };
       falhou(novo ? await db.from('produtos').insert(dados) : await db.from('produtos').update(dados).eq('id', p.id));
       carregarProdutos();
+      setTimeout(perguntarNotificacao, 0); // depois que o formulário fecha
     });
   }
 
@@ -1208,6 +1248,7 @@
     const { error } = await db.from('produtos').delete().eq('id', p.id);
     BD.toast(error ? BD.mensagemErro(error) : 'Produto excluído.', error ? 'erro' : 'ok');
     carregarProdutos();
+    if (!error) perguntarNotificacao();
   });
 
   document.querySelectorAll('[data-novo]').forEach((b) => b.addEventListener('click', () => {
@@ -1258,10 +1299,61 @@
     // Quem só vê a gestão (sem ser líder) não altera nada.
     const leitura = !meuPerfil.lider;
     $('gestao-somente-leitura').hidden = !leitura;
-    $('aba-gestao').querySelectorAll('input, select, textarea').forEach((i) => { i.disabled = leitura; });
+    $('aba-gestao').querySelectorAll('input, select, textarea').forEach((i) => { if (!i.closest('#form-notificacao')) i.disabled = leitura; });
+    prepararNotificacao();
     ['permissoes-salvar', 'perfil-novo', 'cfg-carregar-cargos'].forEach((id) => { $(id).hidden = leitura; });
     el.querySelectorAll('[data-remover-perfil]').forEach((btn) => { btn.hidden = leitura; });
   }
+
+  // ---------------------------------------------------------------- enviar notificação (geral, cargo ou usuário)
+  function prepararNotificacao() {
+    const form = $('form-notificacao');
+    form.hidden = !pode('enviar_notificacoes');
+    if (form.hidden) return;
+    const cargo = $('notif-cargo').value;
+    const usuario = $('notif-usuario').value;
+    $('notif-cargo').innerHTML = cargosServidor.length
+      ? cargosServidor.map((c) => `<option value="${esc(c.id)}">${esc(c.nome)}</option>`).join('')
+      : '<option value="">Nenhum cargo carregado</option>';
+    $('notif-usuario').innerHTML = cache.vendedores.filter((v) => v.ativo)
+      .map((v) => ({ id: v.id, nome: v.nome_discord || v.nome }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+      .map((v) => `<option value="${esc(v.id)}">${esc(v.nome)}</option>`).join('');
+    if (cargo) $('notif-cargo').value = cargo;
+    if (usuario) $('notif-usuario').value = usuario;
+    mostrarAlvoNotificacao();
+  }
+
+  function mostrarAlvoNotificacao() {
+    const alvo = $('notif-alvo').value;
+    $('notif-cargo-campo').hidden = alvo !== 'cargo';
+    $('notif-usuario-campo').hidden = alvo !== 'usuario';
+  }
+  $('notif-alvo').addEventListener('change', mostrarAlvoNotificacao);
+
+  $('form-notificacao').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const erro = $('notif-erro');
+    const falha = (msg) => { erro.textContent = msg; erro.hidden = false; };
+    erro.hidden = true;
+    const alvo = $('notif-alvo').value;
+    const destino = alvo === 'cargo' ? $('notif-cargo').value : alvo === 'usuario' ? $('notif-usuario').value : null;
+    const titulo = $('notif-titulo').value.trim();
+    if (titulo.length < 3) { $('notif-titulo').focus(); return falha('Escreva um título (3 letras ou mais).'); }
+    if (alvo !== 'todos' && !destino) return falha(alvo === 'cargo' ? 'Escolha um cargo (carregue os cargos do servidor).' : 'Escolha um usuário.');
+    const opcao = (sel) => sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : '';
+    const para = alvo === 'todos' ? 'todos os usuários' : alvo === 'cargo' ? `quem tem o cargo "${opcao($('notif-cargo'))}"` : opcao($('notif-usuario'));
+    if (!confirm(`Enviar a notificação "${titulo}" para ${para}?`)) return;
+    $('notif-enviar').disabled = true;
+    const { data, error } = await db.rpc('enviar_notificacao', {
+      p_alvo: alvo, p_destino: destino, p_titulo: titulo, p_mensagem: $('notif-mensagem').value.trim() || null,
+    });
+    $('notif-enviar').disabled = false;
+    if (error) return falha(BD.mensagemErro(error));
+    $('notif-titulo').value = '';
+    $('notif-mensagem').value = '';
+    BD.toast(`Notificação enviada para ${para}${alvo === 'cargo' ? ` (${data} usuário${data === 1 ? '' : 's'} hoje)` : ''}.`, 'ok');
+  });
 
   $('perfil-novo').addEventListener('click', () => {
     const el = $('perfis-lista');

@@ -275,6 +275,18 @@ create table if not exists public.novidades (
   criado_em timestamptz not null default now()
 );
 create index if not exists novidades_criado_em_idx on public.novidades (criado_em);
+-- publicada = false: aviso automático (produto/parceria) esperando quem fez a alteração decidir se notifica.
+-- para_vendedor / para_cargo: só aquele usuário / só quem tem aquele cargo do Discord (os dois vazios = todos).
+alter table public.novidades add column if not exists publicada boolean not null default true;
+alter table public.novidades add column if not exists autor_uid uuid;
+alter table public.novidades add column if not exists autor text;
+alter table public.novidades add column if not exists ref text;
+alter table public.novidades add column if not exists para_vendedor uuid references public.vendedores (id) on delete cascade;
+alter table public.novidades add column if not exists para_cargo text;
+alter table public.novidades drop constraint if exists novidades_tipo_check;
+alter table public.novidades add constraint novidades_tipo_check
+  check (tipo in ('preco', 'produto', 'parceria', 'pagamento', 'mensagem'));
+create index if not exists novidades_pendentes_idx on public.novidades (autor_uid) where not publicada;
 
 -- Discord: webhook só para os pagamentos, horário do relatório, endereço do site (imagens) e
 -- categoria onde o bot mantém os fóruns de parceiros.
@@ -409,7 +421,7 @@ language sql immutable
 as $$ select array[
   'ver_ranking', 'ver_calculadora', 'registrar_venda', 'ver_painel',
   'ver_relatorio', 'ver_vendas', 'ver_usuarios', 'ver_parcerias', 'ver_produtos', 'ver_gestao',
-  'editar_parcerias', 'encerrar_parceria', 'registrar_pagamento', 'cancelar_venda', 'gerenciar_vendedores', 'gerenciar_produtos'] $$;
+  'editar_parcerias', 'encerrar_parceria', 'registrar_pagamento', 'cancelar_venda', 'gerenciar_vendedores', 'gerenciar_produtos', 'enviar_notificacoes'] $$;
 
 -- Permissões do usuário logado: o líder tem todas; os outros, as do perfil do cadastro
 -- somadas às dos perfis ligados a cargos que a pessoa tem no Discord.
@@ -838,6 +850,17 @@ $$;
 
 -- Novidades (preços, produtos e parcerias) desde a última vez que o usuário viu.
 -- p_todas: as últimas 30 dos últimos 30 dias, marcando quais são novas.
+-- A notificação é para este usuário? (publicada e para todos, para ele ou para um cargo que ele tem)
+create or replace function public._novidade_para_mim(n public.novidades, v public.vendedores)
+returns boolean
+language sql stable
+as $$
+  select n.publicada and (
+       (n.para_vendedor is null and n.para_cargo is null)
+    or n.para_vendedor = v.id
+    or n.para_cargo = any (coalesce(v.cargos, '{}')));
+$$;
+
 create or replace function public.minhas_novidades(p_todas boolean default false)
 returns jsonb
 language plpgsql stable security definer
@@ -850,13 +873,15 @@ begin
   if v.id is null then return jsonb_build_object('novas', 0, 'itens', '[]'::jsonb); end if;
   v_desde := coalesce(v.novidades_vistas_em, greatest(v.criado_em, now() - interval '7 days'));
   return jsonb_build_object(
-    'novas', (select count(*) from public.novidades where criado_em > v_desde),
+    'novas', (select count(*) from public.novidades n where n.criado_em > v_desde and public._novidade_para_mim(n, v)),
     'itens', coalesce((
-      select jsonb_agg(jsonb_build_object('tipo', n.tipo, 'titulo', n.titulo, 'descricao', n.descricao,
+      select jsonb_agg(jsonb_build_object('tipo', n.tipo, 'titulo', n.titulo, 'descricao', n.descricao, 'autor', n.autor,
+                                          'individual', n.para_vendedor is not null, 'cargo', n.para_cargo is not null,
                                           'criado_em', n.criado_em, 'nova', n.criado_em > v_desde) order by n.criado_em desc, n.id desc)
-      from (select * from public.novidades
-            where criado_em > case when p_todas then now() - interval '30 days' else v_desde end
-            order by criado_em desc, id desc limit 30) n), '[]'::jsonb));
+      from (select * from public.novidades n
+            where n.criado_em > case when p_todas then now() - interval '30 days' else v_desde end
+              and public._novidade_para_mim(n, v)
+            order by n.criado_em desc, n.id desc limit 30) n), '[]'::jsonb));
 end;
 $$;
 
@@ -885,12 +910,107 @@ as $$
   update public.vendedores set novidades_vistas_em = now() where id = (public._vendedor_atual()).id;
 $$;
 
+-- Aviso automático de produto/parceria: fica pendente (não aparece para ninguém) até quem fez a alteração
+-- escolher "Notificar" ou "Não notificar" no painel. Jobs e SQL Editor (sem usuário) não geram aviso.
+-- A mesma alteração salva em partes (dados e depois imagens) vira um aviso só (bd.ref = produto:<id> / parceria:<id>).
 create or replace function public._novidade(p_tipo text, p_titulo text, p_descricao text)
 returns void
-language sql volatile security definer
+language plpgsql volatile security definer
 set search_path = public
 as $$
-  insert into public.novidades (tipo, titulo, descricao) values (p_tipo, left(p_titulo, 120), left(p_descricao, 500));
+declare
+  v_ref text := nullif(current_setting('bd.ref', true), '');
+  v_titulo text := left(p_titulo, 120);
+  a public.novidades;
+begin
+  if auth.uid() is null then return; end if;
+  if v_ref is not null then
+    select * into a from public.novidades
+    where not publicada and ref = v_ref and autor_uid = auth.uid() and criado_em > now() - interval '30 minutes'
+    order by id desc limit 1;
+    if a.id is not null and v_titulo like '%atualizad%' then
+      if a.titulo = v_titulo then
+        update public.novidades set descricao = left(concat_ws(' · ', a.descricao, p_descricao), 500) where id = a.id;
+        return;
+      elsif a.titulo ~ '^(Nova|Novo) ' then
+        return; -- acabou de ser cadastrado: os detalhes salvos em seguida já fazem parte do cadastro
+      end if;
+    end if;
+  end if;
+  insert into public.novidades (tipo, titulo, descricao, publicada, autor_uid, autor, ref)
+  values (p_tipo, v_titulo, left(p_descricao, 500), false, auth.uid(), public._nome_logado(), v_ref);
+end;
+$$;
+
+-- Avisos que eu gerei e ainda esperam a decisão (o painel pergunta logo depois de salvar).
+create or replace function public.novidades_pendentes()
+returns jsonb
+language sql stable security definer
+set search_path = public
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'tipo', tipo, 'titulo', titulo, 'descricao', descricao) order by id), '[]'::jsonb)
+  from public.novidades
+  where not publicada and autor_uid = auth.uid() and criado_em > now() - interval '1 day';
+$$;
+
+-- Notificar (todos passam a ver, com a mensagem opcional) ou descartar os avisos pendentes.
+create or replace function public.decidir_novidades(p_ids bigint[], p_notificar boolean, p_mensagem text default null)
+returns int
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_msg text := nullif(btrim(coalesce(p_mensagem, '')), '');
+  n int;
+begin
+  if auth.uid() is null then raise exception 'Entre com o Discord.'; end if;
+  if length(v_msg) > 300 then raise exception 'A mensagem pode ter no máximo 300 caracteres.'; end if;
+  if p_notificar then
+    update public.novidades
+    set publicada = true, criado_em = now(), descricao = left(concat_ws(' · ', descricao, v_msg), 500)
+    where id = any (coalesce(p_ids, '{}')) and not publicada and autor_uid = auth.uid();
+  else
+    delete from public.novidades where id = any (coalesce(p_ids, '{}')) and not publicada and autor_uid = auth.uid();
+  end if;
+  get diagnostics n = row_count;
+  return n;
+end;
+$$;
+
+-- Mensagem manual (aba Gestão): para todos, para um cargo do Discord ou para um usuário.
+create or replace function public.enviar_notificacao(p_alvo text, p_destino text, p_titulo text, p_mensagem text)
+returns int
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_titulo text := regexp_replace(btrim(coalesce(p_titulo, '')), '\s+', ' ', 'g');
+  v_msg text := nullif(btrim(coalesce(p_mensagem, '')), '');
+  v_vend uuid;
+  v_cargo text;
+  v_qtd int;
+begin
+  if not public.tem_permissao('enviar_notificacoes') then raise exception 'Você não tem permissão para enviar notificações.'; end if;
+  if length(v_titulo) < 3 then raise exception 'Escreva um título (3 letras ou mais).'; end if;
+  if length(v_titulo) > 120 then raise exception 'O título pode ter no máximo 120 caracteres.'; end if;
+  if length(v_msg) > 500 then raise exception 'A mensagem pode ter no máximo 500 caracteres.'; end if;
+  if p_alvo = 'usuario' then
+    select id into v_vend from public.vendedores where id::text = p_destino and ativo;
+    if v_vend is null then raise exception 'Escolha um usuário ativo.'; end if;
+    v_qtd := 1;
+  elsif p_alvo = 'cargo' then
+    if coalesce(p_destino, '') !~ '^\d{17,20}$' then raise exception 'Escolha um cargo.'; end if;
+    v_cargo := p_destino;
+    select count(*) into v_qtd from public.vendedores where ativo and v_cargo = any (cargos);
+  elsif p_alvo = 'todos' then
+    select count(*) into v_qtd from public.vendedores where ativo;
+  else
+    raise exception 'Escolha para quem enviar.';
+  end if;
+  insert into public.novidades (tipo, titulo, descricao, publicada, autor_uid, autor, para_vendedor, para_cargo)
+  values ('mensagem', v_titulo, v_msg, true, auth.uid(), public._nome_logado(), v_vend, v_cargo);
+  return v_qtd;
+end;
 $$;
 
 -- Avisos automáticos quando um produto ou preço muda pelo site (migrações e jobs do banco não avisam).
@@ -903,6 +1023,7 @@ declare
   v_mudou text[] := '{}';
 begin
   if auth.uid() is null then return null; end if;
+  perform set_config('bd.ref', 'produto:' || coalesce(new.id, old.id)::text, true);
   if tg_op = 'INSERT' then
     if new.ativo then
       perform public._novidade('produto', 'Novo produto: ' || new.nome,
@@ -1357,6 +1478,7 @@ as $$
 declare
   v_mudou text[] := '{}';
 begin
+  perform set_config('bd.ref', 'parceria:' || new.id::text, true);
   if tg_op = 'INSERT' then
     insert into public.parceria_historico (parceria_id, tipo, descricao, autor)
     values (new.id, 'criada', 'Parceria cadastrada' || coalesce(' por ' || new.feita_por_nome, '') || '.', public._nome_logado());
@@ -1367,12 +1489,8 @@ begin
     return new;
   end if;
   if new.ativo is distinct from old.ativo then
-    perform public._novidade('parceria', case when new.ativo then 'Parceria reativada: ' else 'Parceria encerrada: ' end || new.nome, null);
-  elsif new.ativo and (new.nome is distinct from old.nome or new.produtos is distinct from old.produtos) then
-    perform public._novidade('parceria', 'Parceria atualizada: ' || new.nome,
-      concat_ws(' · ',
-        case when new.nome is distinct from old.nome then 'antes: ' || old.nome end,
-        case when new.produtos is distinct from old.produtos then 'Vende: ' || coalesce(nullif(array_to_string(new.produtos, ', '), ''), '—') end));
+    perform public._novidade('parceria', case when new.ativo then 'Parceria reativada: ' else 'Parceria encerrada: ' end || new.nome,
+      case when not new.ativo and new.encerrada_motivo is not null then 'Motivo: ' || new.encerrada_motivo end);
   end if;
   if new.nome is distinct from old.nome then v_mudou := v_mudou || ('nome: ' || old.nome || ' → ' || new.nome); end if;
   if new.responsavel is distinct from old.responsavel then v_mudou := v_mudou || 'responsável'::text; end if;
@@ -1386,6 +1504,11 @@ begin
   if array_length(v_mudou, 1) > 0 then
     insert into public.parceria_historico (parceria_id, tipo, descricao, autor)
     values (new.id, 'editada', 'Alterado: ' || array_to_string(v_mudou, ', ') || '.', public._nome_logado());
+    if new.ativo and old.ativo then
+      perform public._novidade('parceria', 'Parceria atualizada: ' || new.nome,
+        concat_ws(' · ', 'Alterado: ' || array_to_string(v_mudou, ', ') || '.',
+          case when new.produtos is distinct from old.produtos then 'Vende: ' || coalesce(nullif(array_to_string(new.produtos, ', '), ''), '—') end));
+    end if;
   end if;
   return new;
 end;
@@ -1957,6 +2080,13 @@ begin
   insert into public.pagamentos (vendedor_id, vendedor_nome, semana_inicio, valor, observacao, pago_por_discord, pago_por_nome)
   values (vd.id, v_nome, v_ini, v_valor, v_obs, public._discord_id(), v_quem)
   returning id into v_id;
+
+  -- Notificação (🔔) só para quem recebeu.
+  insert into public.novidades (tipo, titulo, descricao, publicada, autor_uid, autor, para_vendedor)
+  values ('pagamento', 'Pagamento recebido: ' || public._formatar_valor(v_valor),
+    concat_ws(' · ', 'Comissão da semana ' || to_char(v_ini, 'DD/MM') || ' a ' || to_char(v_ini + 6, 'DD/MM/YYYY'),
+      'Pago por ' || v_quem, v_obs),
+    true, auth.uid(), v_quem, vd.id);
 
   -- Aviso no Discord (falha no envio não desfaz o pagamento).
   begin
@@ -2593,6 +2723,10 @@ grant execute on function public.discord_aplicar_nomes() to authenticated;
 grant execute on function public.atualizar_meu_discord() to authenticated;
 grant execute on function public.minhas_novidades(boolean) to authenticated;
 grant execute on function public.marcar_novidades_vistas() to authenticated;
+grant execute on function public.novidades_pendentes() to authenticated;
+grant execute on function public.decidir_novidades(bigint[], boolean, text) to authenticated;
+grant execute on function public.enviar_notificacao(text, text, text, text) to authenticated;
+revoke execute on function public._novidade(text, text, text) from public, anon, authenticated;
 grant execute on function public.salvar_meu_id_pagamento(text) to authenticated;
 grant execute on function public.vendas_por_parceria(date, date) to authenticated;
 grant execute on function public.vendas_filtros() to authenticated;
@@ -2619,4 +2753,4 @@ select cron.schedule('bluedragons-forum-parceiros', '* * * * *', 'select public.
 
 -- Novidades com mais de 90 dias saem da lista.
 select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-limpar-novidades';
-select cron.schedule('bluedragons-limpar-novidades', '30 7 * * *', $$delete from public.novidades where criado_em < now() - interval '90 days'$$);
+select cron.schedule('bluedragons-limpar-novidades', '30 7 * * *', $$delete from public.novidades where criado_em < now() - interval '90 days' or (not publicada and criado_em < now() - interval '1 day')$$);

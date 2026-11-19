@@ -9,7 +9,10 @@ Substitui a planilha "VENDAS MERCADO OCULTO" (abas SERRA, PENDRIVE, PAGAMENTO e 
 - **Ranking** (`ranking.html`): pódio e lista dos vendedores por total vendido, com a foto do Discord. Qualquer vendedor cadastrado vê; a comissão não aparece.
 - **Painel** (`admin.html`): relatório semanal (totais, ranking, **pagamento dos vendedores** com o ID para pagamento e **craft usado**), cadastro de **usuários**, parcerias, produtos, gestão de **perfis** e configuração do Discord.
 - **Perfis de acesso** (aba Gestão, só o líder altera): cada perfil escolhe as páginas (Calculadora, Registrar vendas, Ranking, Painel), as abas do painel e as ações (cadastrar/editar parcerias, encerrar, pagar, cancelar vendas, usuários, produtos). Cada usuário recebe um perfil no cadastro, e um perfil também pode vir de um **cargo do Discord**. Na primeira execução do `schema.sql`, os acessos antigos por cargo viram perfis e todos os cadastros recebem o perfil **Vendedor**.
-- **Novidades**: ao entrar, cada usuário vê o que mudou desde a última visita (preços, produtos e parcerias). O 🔔 no topo reabre a lista dos últimos 30 dias.
+- **Notificações (🔔)**: ao entrar, cada usuário vê o que chegou desde a última visita. O 🔔 no topo reabre a lista dos últimos 30 dias.
+  - Ao cadastrar, editar, encerrar ou reativar uma parceria, e ao cadastrar, editar ou excluir um produto, o painel pergunta **"Notificar alteração?"** (com mensagem adicional opcional). Sem confirmar, ninguém é avisado.
+  - Quem recebe um pagamento de comissão recebe uma notificação só para ele.
+  - Na aba Gestão, quem tem a permissão **📢 Enviar notificações** manda uma mensagem para todos, para quem tem um cargo do Discord ou para um usuário.
 - **Discord**: cada venda registrada gera um aviso no canal; o relatório da semana anterior sai no dia e horário escolhidos na aba Discord (padrão: segunda às 09:00, Brasília), com embeds, logo e as imagens dos produtos. O botão **🧪 Enviar relatório simulado** manda um exemplo com dados fictícios. Os pagamentos podem ir para um **webhook próprio**.
 - **Fórum de parceiros**: com o ID de uma categoria configurado, o bot cria um fórum por produto vendido pelas parcerias (arma, munição…) e mantém um post por parceria, atualizado quando ela muda e apagado quando é encerrada.
 

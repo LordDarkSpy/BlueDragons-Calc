@@ -129,6 +129,22 @@
 
     <!-- Configurações / Discord -->
     <section id="aba-gestao" class="painel" role="tabpanel" hidden>
+      <form id="form-notificacao" class="cartao" novalidate hidden>
+        <h2>📢 Enviar notificação</h2>
+        <p class="dica">Aparece no 🔔 de quem você escolher, na próxima vez que a pessoa abrir o site.</p>
+        <div class="grade-form">
+          <div><label class="rotulo" for="notif-alvo">Para</label>
+            <select id="notif-alvo"><option value="todos">Todos (geral)</option><option value="cargo">Quem tem um cargo do Discord</option><option value="usuario">Um usuário</option></select></div>
+          <div id="notif-cargo-campo" hidden><label class="rotulo" for="notif-cargo">Cargo</label><select id="notif-cargo"></select></div>
+          <div id="notif-usuario-campo" hidden><label class="rotulo" for="notif-usuario">Usuário</label><select id="notif-usuario"></select></div>
+        </div>
+        <label class="rotulo" for="notif-titulo">Título <span class="obrigatorio">*</span></label>
+        <input id="notif-titulo" type="text" maxlength="120" autocomplete="off" placeholder="Ex.: Reunião sábado às 20h">
+        <label class="rotulo" for="notif-mensagem">Mensagem <span class="opcional">(opcional)</span></label>
+        <textarea id="notif-mensagem" maxlength="500" rows="3" placeholder="Detalhes da notificação"></textarea>
+        <p id="notif-erro" class="status erro" hidden></p>
+        <button id="notif-enviar" type="submit" class="botao-primario">📢 Enviar notificação</button>
+      </form>
       <div class="cartao">
         <h2>🏢 Organização</h2>
         <div class="grade-form">
@@ -360,9 +376,23 @@
   </form>
 </div>
 
+<!-- Notificar alteração (depois de mexer em produto ou parceria) -->
+<div id="modal-notificar" class="modal-fundo" hidden>
+  <div class="modal modal-largo cartao" role="dialog" aria-modal="true" aria-labelledby="notificar-titulo">
+    <h2 id="notificar-titulo">🔔 Notificar alteração?</h2>
+    <p class="modal-texto">Quer avisar todos os usuários? A notificação aparece no 🔔 de cada um.</p>
+    <ul id="notificar-lista" class="lista-novidades"></ul>
+    <label class="rotulo" for="notificar-mensagem">Mensagem adicional <span class="opcional">(opcional)</span></label>
+    <textarea id="notificar-mensagem" maxlength="300" rows="2" placeholder="Ex.: vale a partir de hoje"></textarea>
+    <p id="notificar-erro" class="status erro" hidden></p>
+    <button id="notificar-sim" type="button" class="botao-primario botao-bloco">🔔 Notificar</button>
+    <button id="notificar-nao" type="button" class="botao-secundario botao-bloco">Não notificar</button>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=7"></script>
-<script src="js/admin.js?v=20"></script>
+<script src="js/comum.js?v=8"></script>
+<script src="js/admin.js?v=21"></script>
 </body>
 </html>

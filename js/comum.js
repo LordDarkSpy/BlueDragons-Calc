@@ -77,7 +77,7 @@
     },
 
     // ---------------------------------------------------------------- novidades
-    // Mostra, ao entrar, o que mudou desde a última visita (preços, produtos e parcerias).
+    // Mostra, ao entrar, o que chegou desde a última visita (preços, produtos, parcerias, pagamentos e mensagens).
     async novidades(perfil, abrirTodas) {
       if (!perfil || !perfil.cadastrado) return;
       const botao = document.getElementById('botao-novidades');
@@ -118,8 +118,11 @@
         });
         document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) BD.fecharModal(modal); });
       }
-      const ICONES = { preco: '💲', produto: '📦', parceria: '🤝' };
-      const ROTULOS = { preco: 'Preço', produto: 'Produto', parceria: 'Parceria' };
+      const ICONES = { preco: '💲', produto: '📦', parceria: '🤝', pagamento: '💸', mensagem: '📢' };
+      const ROTULOS = { preco: 'Preço', produto: 'Produto', parceria: 'Parceria', pagamento: 'Pagamento', mensagem: 'Mensagem' };
+      const origem = (n) => [ROTULOS[n.tipo] || '',
+        n.tipo === 'mensagem' && n.autor ? 'de ' + n.autor : '',
+        n.individual ? 'só para você' : n.cargo ? 'para o seu cargo' : ''].filter(Boolean).join(' ');
       modal.querySelector('#novidades-titulo').textContent = todas ? '🔔 Novidades dos últimos 30 dias' : '🔔 Novidades desde a sua última visita';
       modal.querySelector('#novidades-lista').innerHTML = itens.length
         ? `<ul class="lista-novidades">${itens.map((n) => `
@@ -128,7 +131,7 @@
               <div>
                 <strong>${BD.esc(n.titulo)}</strong>${n.nova && todas ? ' <span class="etiqueta pendente">nova</span>' : ''}
                 ${n.descricao ? `<p>${BD.esc(n.descricao)}</p>` : ''}
-                <span class="dica">${ROTULOS[n.tipo] || ''} · ${BD.esc(BD.dataHoraBR(n.criado_em))}</span>
+                <span class="dica">${BD.esc(origem(n))} · ${BD.esc(BD.dataHoraBR(n.criado_em))}</span>
               </div>
             </li>`).join('')}</ul>`
         : '<p class="vazio">Nenhuma novidade nos últimos 30 dias.</p>';
