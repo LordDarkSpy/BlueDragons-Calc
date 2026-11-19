@@ -2107,7 +2107,8 @@ begin
     v_url := coalesce(nullif(c.webhook_pagamentos, ''), nullif(c.webhook_relatorios, ''), nullif(c.webhook_vendas, ''));
     if v_url is not null then
       v_campos := jsonb_build_array(
-        jsonb_build_object('name', '👤 Vendedor', 'value', v_nome, 'inline', true),
+        jsonb_build_object('name', '👤 Vendedor', 'value',
+          case when coalesce(vd.discord_id, '') <> '' then '<@' || vd.discord_id || '>' || E'\n' || v_nome else v_nome end, 'inline', true),
         jsonb_build_object('name', '🗓️ Semana', 'value', to_char(v_ini, 'DD/MM') || ' a ' || to_char(v_ini + 6, 'DD/MM/YYYY'), 'inline', true),
         jsonb_build_object('name', '💰 Valor pago', 'value', '**' || public._formatar_valor(v_valor) || '**', 'inline', true),
         jsonb_build_object('name', '🆔 ID para pagamento', 'value', coalesce('`' || nullif(vd.id_pagamento, '') || '`', '—'), 'inline', true),
@@ -2123,8 +2124,10 @@ begin
       perform net.http_post(url := v_url, body := jsonb_build_object(
         'username', c.nome_organizacao || ' — Pagamentos',
         'avatar_url', public._url_imagem('img/logo.png'),
-        'content', '||<@' || vd.discord_id || '>||',
-        'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb, 'users', jsonb_build_array(vd.discord_id)),
+        'content', case when coalesce(vd.discord_id, '') <> ''
+          then '💸 <@' || vd.discord_id || '>, sua comissão foi paga!' end,
+        'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb, 'users',
+          case when coalesce(vd.discord_id, '') <> '' then jsonb_build_array(vd.discord_id) else '[]'::jsonb end),
         'embeds', jsonb_build_array(jsonb_build_object(
           'title', '💸 Pagamento registrado',
           'color', 3066993,
