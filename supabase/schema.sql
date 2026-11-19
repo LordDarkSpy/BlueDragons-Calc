@@ -1398,10 +1398,29 @@ set search_path = public
 as $$
 declare
   v_motivo text := btrim(coalesce(p_motivo, ''));
+  v public.vendas;
+  v_ini date;
+  pg public.pagamentos;
 begin
   if not public.tem_permissao('cancelar_venda') then raise exception 'Você não tem permissão para cancelar vendas.'; end if;
   if length(v_motivo) < 3 then raise exception 'Informe a justificativa do cancelamento.'; end if;
   if length(v_motivo) > 300 then raise exception 'A justificativa pode ter no máximo 300 caracteres.'; end if;
+
+  -- Comissão já paga: a venda entrou no valor pago e não pode mais ser cancelada.
+  select * into v from public.vendas where id = p_id;
+  if v.id is not null and not v.cancelada then
+    v_ini := public._inicio_semana((v.criado_em at time zone 'America/Sao_Paulo')::date);
+    -- mesma trava do registrar_pagamento: não deixa pagar e cancelar ao mesmo tempo
+    perform pg_advisory_xact_lock(hashtext('pagamento:' || v.vendedor_id::text || ':' || v_ini::text));
+    select * into pg from public.pagamentos
+    where vendedor_id = v.vendedor_id and semana_inicio = v_ini order by pago_em desc limit 1;
+    if pg.id is not null then
+      raise exception 'Não é possível cancelar a venda #%: a comissão de % da semana de % a % já foi paga em % por %. O valor pago já inclui esta venda.',
+        v.numero, v.vendedor_nome, to_char(v_ini, 'DD/MM'), to_char(v_ini + 6, 'DD/MM/YYYY'),
+        to_char(pg.pago_em at time zone 'America/Sao_Paulo', 'DD/MM/YYYY "às" HH24:MI'), coalesce(pg.pago_por_nome, 'um administrador');
+    end if;
+  end if;
+
   update public.vendas set cancelada = true, cancelada_em = now(), cancelada_motivo = v_motivo, cancelada_por = public._nome_logado()
   where id = p_id and not cancelada;
   if not found then raise exception 'Venda não encontrada ou já cancelada.'; end if;
