@@ -1132,7 +1132,7 @@ begin
     'username', c.nome_organizacao || ' — Vendas',
     'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb),
     'embeds', jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
-      'title', '🐉 Venda #' || v.numero,
+      'title', '🧾 Venda #' || v.numero,
       'color', case when v.com_parceria then 3447003 else 2001125 end,
       'fields', v_campos,
       'thumbnail', jsonb_build_object('url', public._url_imagem('img/logo.png')),
