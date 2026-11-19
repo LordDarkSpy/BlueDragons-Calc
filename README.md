@@ -89,7 +89,7 @@ Para trocar de servidor (por exemplo, sair do servidor de testes), use **🔁 Tr
 2. O bot precisa ser **Administrador** do servidor: use o link de convite da aba Discord (ele já pede Administrador). Se o bot já estiver no servidor, abrir o link e autorizar de novo atualiza a permissão.
 3. Crie uma categoria no servidor, copie o ID (botão direito → Copiar ID do canal), cole em **ID da categoria de parceiros**, salve e clique em **🔄 Sincronizar agora**. Depois disso, o fórum se atualiza sozinho a cada minuto e logo após salvar uma parceria.
 
-As imagens das parcerias ficam no bucket privado e não vão para o fórum.
+O post mostra as imagens cadastradas na parceria: o banner em destaque e a localização e as cores da organização em galeria. Para isso o bucket `parcerias` abre por link direto (ninguém consegue listar os arquivos; os nomes incluem o código da parceria).
 
 ### 3. Conectar o site
 

@@ -225,10 +225,11 @@ insert into public.parceria_historico (parceria_id, tipo, descricao, criado_em)
 select p.id, 'criada', 'Parceria cadastrada.', p.criado_em from public.parcerias p
 where not exists (select 1 from public.parceria_historico h where h.parceria_id = p.id);
 
--- Imagens das parcerias: bucket privado, só administradores leem e enviam.
+-- Imagens das parcerias: abrem por link direto (para aparecerem no fórum do Discord), mas ninguém
+-- consegue listar o bucket; só quem acessa o painel vê a lista e só quem edita parcerias envia.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('parcerias', 'parcerias', false, 5242880, array['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
-on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit,
+values ('parcerias', 'parcerias', true, 5242880, array['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
   allowed_mime_types = excluded.allowed_mime_types;
 
 -- Pagamentos das comissões semanais aos vendedores.
@@ -283,6 +284,9 @@ alter table public.configuracoes add column if not exists relatorio_hora time no
 alter table public.configuracoes add column if not exists relatorio_ultima_semana date;
 alter table public.configuracoes add column if not exists site_url text not null default 'https://lorddarkspy.github.io/BlueDragons-Calc/'
   check (site_url ~ '^https://');
+-- Endereço do projeto Supabase (link público das imagens das parcerias no Discord).
+alter table public.configuracoes add column if not exists supabase_url text not null default 'https://smvggtvarsinaqlflrqt.supabase.co'
+  check (supabase_url ~ '^https://');
 alter table public.configuracoes add column if not exists discord_categoria_parceiros text
   check (discord_categoria_parceiros is null or discord_categoria_parceiros ~ '^\d{17,20}$');
 
@@ -2272,17 +2276,35 @@ as $$
   group by p.id, public._chave_produto(x);
 $$;
 
--- Conteúdo do post de uma parceria (e o hash, para só editar quando algo mudar).
+-- Link público de uma imagem de parceria (caminho no bucket "parcerias").
+create or replace function public._url_imagem_parceria(p_caminho text)
+returns text
+language sql stable
+as $$
+  select case when coalesce(p_caminho, '') = '' then null
+    else rtrim((select supabase_url from public.configuracoes where id = 1), '/') || '/storage/v1/object/public/parcerias/' || p_caminho end;
+$$;
+
+-- Conteúdo do post de uma parceria, com as imagens cadastradas (e o hash, para só editar quando algo mudar).
 create or replace function public._forum_post(p public.parcerias)
 returns jsonb
 language plpgsql stable security definer
 set search_path = public
 as $$
 declare
-  v_org text := (select nome_organizacao from public.configuracoes where id = 1);
+  c public.configuracoes;
+  v_org text;
+  v_link text;
   v_embed jsonb;
+  v_embeds jsonb;
+  v_img text;
 begin
+  select * into c from public.configuracoes where id = 1;
+  v_org := c.nome_organizacao;
+  v_link := c.site_url;  -- mesmo link em todos os embeds: o Discord junta as imagens numa galeria
   v_embed := jsonb_strip_nulls(jsonb_build_object(
+    'url', v_link,
+    'image', case when p.img_banner is not null then jsonb_build_object('url', public._url_imagem_parceria(p.img_banner)) end,
     'title', '🤝 ' || p.nome,
     'description', p.observacoes,
     'color', 3447003,
@@ -2293,7 +2315,13 @@ begin
       public._campo('✍️ Parceria feita por', p.feita_por_nome),
       public._campo('📅 Parceira desde', to_char(p.criado_em at time zone 'America/Sao_Paulo', 'DD/MM/YYYY'))),
     'footer', jsonb_build_object('text', 'Atualizado automaticamente pela calculadora ' || v_org)));
-  return jsonb_build_object('nome', left(p.nome, 100), 'embed', v_embed, 'hash', md5(left(p.nome, 100) || v_embed::text));
+  v_embeds := jsonb_build_array(v_embed);
+  -- Localização e cores da organização entram na galeria (até 4 imagens no total).
+  foreach v_img in array array[p.img_localizacao, p.img_cores] loop
+    continue when v_img is null;
+    v_embeds := v_embeds || jsonb_build_array(jsonb_build_object('url', v_link, 'image', jsonb_build_object('url', public._url_imagem_parceria(v_img))));
+  end loop;
+  return jsonb_build_object('nome', left(p.nome, 100), 'embeds', v_embeds, 'hash', md5(left(p.nome, 100) || v_embeds::text));
 end;
 $$;
 
@@ -2414,7 +2442,7 @@ begin
       select x.status, x.corpo into s, b from public._discord_api('POST', '/channels/' || r.canal_id || '/threads', jsonb_build_object(
         'name', r.post->>'nome',
         'auto_archive_duration', 10080,
-        'message', jsonb_build_object('embeds', jsonb_build_array(r.post->'embed'), 'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb)))) x;
+        'message', jsonb_build_object('embeds', r.post->'embeds', 'allowed_mentions', jsonb_build_object('parse', '[]'::jsonb)))) x;
       v_feitos := v_feitos + 1;
       if s not in (200, 201) then return public._forum_erro(s, b); end if;
       insert into public.discord_posts (parceria_id, chave, thread_id, nome, hash)
@@ -2431,12 +2459,12 @@ begin
       end if;
       -- A primeira mensagem do post tem o mesmo ID do post.
       select x.status, x.corpo into s, b from public._discord_api('PATCH', '/channels/' || r.thread_id || '/messages/' || r.thread_id,
-        jsonb_build_object('embeds', jsonb_build_array(r.post->'embed'))) x;
+        jsonb_build_object('embeds', r.post->'embeds')) x;
       v_feitos := v_feitos + 1;
       if s = 400 and (b->>'code') = '50083' then -- post arquivado: desarquiva e tenta de novo
         perform public._discord_api('PATCH', '/channels/' || r.thread_id, jsonb_build_object('archived', false));
         select x.status, x.corpo into s, b from public._discord_api('PATCH', '/channels/' || r.thread_id || '/messages/' || r.thread_id,
-          jsonb_build_object('embeds', jsonb_build_array(r.post->'embed'))) x;
+          jsonb_build_object('embeds', r.post->'embeds')) x;
         v_feitos := v_feitos + 2;
       end if;
       if s = 404 then -- apagado à mão: recria na próxima rodada
