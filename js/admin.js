@@ -427,6 +427,7 @@
   function campoHTML(c) {
     const id = `campo-${c.nome}`;
     const valor = c.valor ?? '';
+    if (c.tipo === 'html') return `<div class="largura-total">${c.html}</div>`;
     if (c.tipo === 'craft') {
       return `<div class="largura-total">
         <span class="rotulo">${esc(c.rotulo)}</span>
@@ -511,7 +512,7 @@
     $('edicao-erro').hidden = true;
     aoSalvar = async () => {
       const valores = {};
-      campos.forEach((c) => {
+      campos.filter((c) => c.tipo !== 'html').forEach((c) => {
         const el = $(`campo-${c.nome}`);
         valores[c.nome] = c.tipo === 'craft' ? lerCraft(el) : c.tipo === 'checkbox' ? el.checked : el.value.trim();
       });
@@ -685,6 +686,12 @@
         dica: proprio && !meuPerfil.lider ? "Você não pode mudar o seu próprio perfil." : "Define o que a pessoa vê e faz. Vendedor = calculadora + registrar vendas + ranking." },
       { nome: "ativo", rotulo: "Ativo (pode entrar no site)", tipo: "checkbox", valor: v.ativo },
       ...(meuPerfil.lider ? [{ nome: "admin", rotulo: "Administrador manual / líder (acessa tudo e gerencia os perfis)", tipo: "checkbox", valor: v.admin }] : []),
+      // Acesso sem Discord: no cadastro novo, gera ao salvar; na edição, abre a tela do código.
+      ...(novo
+        ? [{ nome: "gerar_codigo", rotulo: "🔑 Gerar código de acesso ao salvar (para quem não consegue entrar com o Discord)", tipo: "checkbox", valor: false }]
+        : [{ nome: "codigo", tipo: "html", html: `<div class="bloco-codigo">
+            <button type="button" class="botao botao-pequeno" data-codigo-vendedor="${esc(v.id)}">🔑 Código de acesso</button>
+            <p class="dica">Para quem não consegue entrar com o Discord (ex.: conta sem e-mail): gere um código e passe para a pessoa digitar na tela de login.</p></div>` }]),
     ], async (val) => {
       if (!meuPerfil.lider) val.admin = !!v.admin; // só o líder mexe nisso
       if (val.nome.length < 2) throw new Error("O nome precisa ter pelo menos 2 letras.");
@@ -695,8 +702,88 @@
       }));
       await carregarVendedores();
       sincronizarNomes(id, true);
+      if (novo && val.gerar_codigo) {
+        const salvo = cache.vendedores.find((x) => x.id === id);
+        setTimeout(() => abrirCodigo(salvo || { id, nome: val.nome }, true), 50);
+      }
     });
   }
+
+  // ---------------------------------------------------------------- código de acesso (sem Discord)
+
+  let codigoVendedor = null;
+
+  async function abrirCodigo(v, gerarJa) {
+    codigoVendedor = v;
+    $('codigo-titulo').textContent = `Código de acesso · ${nomeVendedor(v)}`;
+    $('codigo-gerado').hidden = true;
+    $('codigo-erro').hidden = true;
+    $('codigo-revogar').hidden = true;
+    $('codigo-status').textContent = 'Carregando…';
+    $('codigo-copiar').textContent = '📋 Copiar código';
+    $('codigo-gerar').textContent = '🔑 Gerar código';
+    BD.abrirModal($('modal-codigo'), $('codigo-gerar'));
+    if (gerarJa) return gerarCodigo();
+    atualizarInfoCodigo();
+  }
+
+  async function atualizarInfoCodigo() {
+    const { data, error } = await db.rpc('codigo_acesso_info', { p_vendedor_id: codigoVendedor.id });
+    if (error) {
+      $('codigo-status').textContent = '';
+      $('codigo-erro').textContent = BD.mensagemErro(error);
+      $('codigo-erro').hidden = false;
+      return;
+    }
+    const partes = [];
+    partes.push(data.aparelhos ? `${data.aparelhos} aparelho${data.aparelhos === 1 ? '' : 's'} conectado${data.aparelhos === 1 ? '' : 's'} por código.` : 'Nenhum aparelho conectado por código.');
+    if (data.codigo_expira_em && $('codigo-gerado').hidden) partes.push(`Há um código ainda não usado, válido até ${BD.dataHoraBR(data.codigo_expira_em)} (gerar outro cancela esse).`);
+    $('codigo-status').textContent = partes.join(' ');
+    $('codigo-revogar').hidden = !data.aparelhos && !data.codigo_expira_em;
+  }
+
+  async function gerarCodigo() {
+    const botao = $('codigo-gerar');
+    botao.disabled = true;
+    $('codigo-erro').hidden = true;
+    const { data, error } = await db.rpc('gerar_codigo_acesso', { p_vendedor_id: codigoVendedor.id });
+    botao.disabled = false;
+    if (error) {
+      $('codigo-erro').textContent = BD.mensagemErro(error);
+      $('codigo-erro').hidden = false;
+      return atualizarInfoCodigo();
+    }
+    $('codigo-valor').textContent = data.codigo;
+    $('codigo-validade').textContent = `Vale uma vez só, até ${BD.dataHoraBR(data.expira_em)}. Se a pessoa sair do site, vai precisar de um código novo.`;
+    $('codigo-gerado').hidden = false;
+    botao.textContent = '🔁 Gerar outro código';
+    atualizarInfoCodigo();
+  }
+
+  $('codigo-gerar').addEventListener('click', gerarCodigo);
+  $('codigo-copiar').addEventListener('click', (e) => {
+    BD.copiar($('codigo-valor').textContent).then(() => { e.target.textContent = '✅ Código copiado!'; });
+  });
+  $('codigo-revogar').addEventListener('click', async () => {
+    const { data, error } = await db.rpc('revogar_acessos_codigo', { p_vendedor_id: codigoVendedor.id });
+    if (error) {
+      $('codigo-erro').textContent = BD.mensagemErro(error);
+      $('codigo-erro').hidden = false;
+      return;
+    }
+    $('codigo-gerado').hidden = true;
+    $('codigo-gerar').textContent = '🔑 Gerar código';
+    BD.toast(data ? `${data} aparelho${data === 1 ? '' : 's'} desconectado${data === 1 ? '' : 's'}.` : 'Código cancelado.', 'ok');
+    atualizarInfoCodigo();
+  });
+  $('codigo-fechar').addEventListener('click', () => BD.fecharModal($('modal-codigo')));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal-codigo').hidden) BD.fecharModal($('modal-codigo')); });
+  $('edicao-campos').addEventListener('click', (e) => {
+    const botao = e.target.closest('[data-codigo-vendedor]');
+    if (!botao) return;
+    const v = cache.vendedores.find((x) => x.id === botao.dataset.codigoVendedor);
+    if (v) abrirCodigo(v);
+  });
 
   // Cargos do servidor (para mostrar nomes e ligar aos perfis).
   let cargosServidor = [];

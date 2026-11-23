@@ -273,6 +273,36 @@ alter table public.perfis add column if not exists padrao boolean not null defau
 create unique index if not exists perfis_padrao_idx on public.perfis ((true)) where padrao;
 alter table public.vendedores add column if not exists perfil_id uuid references public.perfis (id) on delete set null;
 
+-- Acesso por código (para quem não consegue entrar com o Discord, ex.: conta sem e-mail).
+-- O gestor gera um código de uso único (vale 24 h) no cadastro do usuário; a pessoa digita o código
+-- no login, o site cria uma sessão anônima do Supabase e ela fica ligada ao cadastro (acessos_codigo).
+-- Só o hash do código fica gravado.
+create table if not exists public.codigos_acesso (
+  id uuid primary key default gen_random_uuid(),
+  vendedor_id uuid not null references public.vendedores (id) on delete cascade,
+  codigo_hash text not null unique,
+  criado_por text,
+  criado_em timestamptz not null default now(),
+  expira_em timestamptz not null,
+  usado_em timestamptz
+);
+create table if not exists public.acessos_codigo (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  vendedor_id uuid not null references public.vendedores (id) on delete cascade,
+  criado_em timestamptz not null default now()
+);
+create index if not exists acessos_codigo_vendedor_idx on public.acessos_codigo (vendedor_id);
+-- Tentativas erradas (limite contra chute de códigos).
+create table if not exists public.codigo_tentativas (
+  user_id uuid not null,
+  criado_em timestamptz not null default now()
+);
+create index if not exists codigo_tentativas_idx on public.codigo_tentativas (user_id, criado_em);
+alter table public.codigos_acesso enable row level security;
+alter table public.acessos_codigo enable row level security;
+alter table public.codigo_tentativas enable row level security;
+revoke all on public.codigos_acesso, public.acessos_codigo, public.codigo_tentativas from anon, authenticated;
+
 -- Novidades mostradas ao entrar no site (preços, produtos e parcerias).
 create table if not exists public.novidades (
   id bigint generated always as identity primary key,
@@ -395,14 +425,19 @@ where p.nome = i.nome and p.imagem is null;
 -- ID do Discord do usuário logado. Vem de auth.identities, que é preenchida pelo
 -- próprio Supabase no login (os metadados do usuário não são usados porque o
 -- usuário consegue editá-los).
+-- Sem Discord: a sessão anônima ligada a um cadastro por um código de acesso vale como o ID daquele cadastro.
 create or replace function public._discord_id()
 returns text
 language sql stable security definer
 set search_path = public
 as $$
-  select provider_id from auth.identities
-  where user_id = auth.uid() and provider = 'discord'
-  limit 1;
+  select coalesce(
+    (select provider_id from auth.identities
+      where user_id = auth.uid() and provider = 'discord'
+      limit 1),
+    (select v.discord_id from public.acessos_codigo a
+       join public.vendedores v on v.id = a.vendedor_id
+      where a.user_id = auth.uid()));
 $$;
 
 -- Cadastro (ativo) do usuário logado, ou nulo se ele não estiver cadastrado.
@@ -1592,6 +1627,147 @@ begin
   if not found then
     raise exception 'Pedido não encontrado: talvez outra pessoa já tenha decidido. Atualize a lista.';
   end if;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Acesso por código (sem Discord)
+-- -----------------------------------------------------------------------------
+
+-- Permissões de um cadastro (mesma soma de _minhas_permissoes, para outra pessoa).
+create or replace function public._permissoes_de(p_vendedor_id uuid)
+returns text[]
+language sql stable security definer
+set search_path = public
+as $$
+  select case
+    when v.admin or exists (select 1 from public.devs d where d.discord_id = v.discord_id) then public._permissoes_validas()
+    else coalesce((select array_agg(distinct x)
+                     from public.perfis pf cross join unnest(pf.permissoes) x
+                    where pf.padrao or pf.id = v.perfil_id or pf.cargos && v.cargos), '{}') end
+  from public.vendedores v where v.id = p_vendedor_id;
+$$;
+
+-- Quem gera o código entra como aquela pessoa, então só vale para quem tem permissões que o gestor também tem.
+create or replace function public._exigir_codigo_permitido(p_vendedor_id uuid)
+returns public.vendedores
+language plpgsql stable security definer
+set search_path = public
+as $$
+declare
+  v public.vendedores;
+begin
+  if not public.tem_permissao('gerenciar_vendedores') then
+    raise exception 'Você não tem permissão para gerenciar usuários.';
+  end if;
+  select * into v from public.vendedores where id = p_vendedor_id;
+  if v.id is null then raise exception 'Usuário não encontrado.'; end if;
+  if exists (select 1 from public.devs d where d.discord_id = v.discord_id) and not public._e_dev() then
+    raise exception 'Só o DEV gera código de acesso para o DEV.';
+  end if;
+  if not public._e_lider() then
+    if v.admin then raise exception 'Só o líder gera código de acesso para um líder.'; end if;
+    if not (coalesce(public._permissoes_de(v.id), '{}') <@ public._minhas_permissoes()) then
+      raise exception 'Este usuário tem permissões que você não tem. Peça ao líder para gerar o código.';
+    end if;
+  end if;
+  return v;
+end;
+$$;
+
+-- Aparelhos conectados por código e código ainda válido (para a tela do usuário no painel).
+create or replace function public.codigo_acesso_info(p_vendedor_id uuid)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+begin
+  perform public._exigir_codigo_permitido(p_vendedor_id);
+  return jsonb_build_object(
+    'aparelhos', (select count(*) from public.acessos_codigo where vendedor_id = p_vendedor_id),
+    'codigo_expira_em', (select max(expira_em) from public.codigos_acesso
+                          where vendedor_id = p_vendedor_id and usado_em is null and expira_em > now()));
+end;
+$$;
+
+-- Gera um código novo (o anterior, se não foi usado, deixa de valer). Vale 24 h e uma vez só.
+create or replace function public.gerar_codigo_acesso(p_vendedor_id uuid)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public, extensions
+as $$
+declare
+  v public.vendedores := public._exigir_codigo_permitido(p_vendedor_id);
+  v_letras constant text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; -- sem 0/O e 1/I
+  v_bytes bytea := extensions.gen_random_bytes(8);
+  v_codigo text := '';
+  v_expira timestamptz := now() + interval '24 hours';
+begin
+  if not v.ativo then raise exception 'Ative o usuário antes de gerar o código.'; end if;
+  for i in 0..7 loop
+    v_codigo := v_codigo || substr(v_letras, (get_byte(v_bytes, i) % 32) + 1, 1);
+  end loop;
+  delete from public.codigos_acesso where vendedor_id = v.id and usado_em is null;
+  insert into public.codigos_acesso (vendedor_id, codigo_hash, criado_por, expira_em)
+  values (v.id, encode(extensions.digest(v_codigo, 'sha256'), 'hex'), public._nome_logado(), v_expira);
+  return jsonb_build_object('codigo', left(v_codigo, 4) || '-' || right(v_codigo, 4), 'expira_em', v_expira);
+end;
+$$;
+
+-- Desconecta todos os aparelhos que entraram por código (e cancela o código ainda não usado).
+create or replace function public.revogar_acessos_codigo(p_vendedor_id uuid)
+returns int
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_qtd int;
+begin
+  perform public._exigir_codigo_permitido(p_vendedor_id);
+  delete from public.codigos_acesso where vendedor_id = p_vendedor_id and usado_em is null;
+  delete from public.acessos_codigo where vendedor_id = p_vendedor_id;
+  get diagnostics v_qtd = row_count;
+  return v_qtd;
+end;
+$$;
+
+-- A pessoa (numa sessão anônima) digita o código e fica ligada ao cadastro.
+-- Erros de código voltam como {ok: false} (não como exceção) para a tentativa ficar registrada.
+create or replace function public.resgatar_codigo_acesso(p_codigo text)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public, extensions
+as $$
+declare
+  v_codigo text := upper(regexp_replace(coalesce(p_codigo, ''), '[^A-Za-z0-9]', '', 'g'));
+  c public.codigos_acesso;
+  v public.vendedores;
+begin
+  if auth.uid() is null then raise exception 'Sessão não encontrada. Atualize a página.'; end if;
+  if exists (select 1 from auth.identities where user_id = auth.uid() and provider = 'discord') then
+    raise exception 'Você já entrou com o Discord. O código é só para quem não consegue entrar pelo Discord.';
+  end if;
+  delete from public.codigo_tentativas where criado_em < now() - interval '1 day';
+  if (select count(*) from public.codigo_tentativas
+       where user_id = auth.uid() and criado_em > now() - interval '15 minutes') >= 5 then
+    return jsonb_build_object('ok', false, 'erro', 'Muitas tentativas erradas. Espere 15 minutos e tente de novo.');
+  end if;
+  select * into c from public.codigos_acesso
+   where codigo_hash = encode(extensions.digest(v_codigo, 'sha256'), 'hex')
+     and usado_em is null and expira_em > now()
+   for update;
+  if c.id is null then
+    insert into public.codigo_tentativas (user_id) values (auth.uid());
+    return jsonb_build_object('ok', false, 'erro', 'Código inválido, já usado ou vencido. Peça um novo código à liderança.');
+  end if;
+  select * into v from public.vendedores where id = c.vendedor_id;
+  if not coalesce(v.ativo, false) then
+    return jsonb_build_object('ok', false, 'erro', 'Este cadastro está desativado. Fale com a liderança.');
+  end if;
+  update public.codigos_acesso set usado_em = now() where id = c.id;
+  insert into public.acessos_codigo (user_id, vendedor_id) values (auth.uid(), v.id)
+  on conflict (user_id) do update set vendedor_id = excluded.vendedor_id, criado_em = now();
+  return jsonb_build_object('ok', true, 'nome', coalesce(v.nome_discord, v.nome));
 end;
 $$;
 
@@ -3259,6 +3435,10 @@ grant execute on function public.salvar_vendedor(uuid, text, text, boolean, bool
 grant execute on function public.solicitar_cadastro(text, text, text) to authenticated;
 grant execute on function public.aprovar_cadastro(uuid, uuid, text, text) to authenticated;
 grant execute on function public.recusar_cadastro(uuid, text) to authenticated;
+grant execute on function public.codigo_acesso_info(uuid) to authenticated;
+grant execute on function public.gerar_codigo_acesso(uuid) to authenticated;
+grant execute on function public.revogar_acessos_codigo(uuid) to authenticated;
+grant execute on function public.resgatar_codigo_acesso(text) to authenticated;
 grant execute on function public.relatorio_periodo(date, date) to authenticated;
 grant execute on function public.enviar_relatorio_discord(date) to authenticated;
 grant execute on function public.registrar_pagamento(uuid, date, text) to authenticated;

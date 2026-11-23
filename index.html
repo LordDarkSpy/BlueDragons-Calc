@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calculadora de Venda — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=25">
+<link rel="stylesheet" href="css/style.css?v=26">
 </head>
 <body>
 
@@ -114,8 +114,17 @@
     <div id="login-entrar-bloco">
       <p class="modal-texto">Entre com a sua conta do Discord para registrar vendas.</p>
       <button id="entrar-discord" type="button" class="botao-discord botao-bloco">Entrar com Discord</button>
-    <p class="dica dica-conta">Tem mais de uma conta no Discord? Na tela do Discord, toque em <strong>“Não é você?”</strong> para escolher outra. No celular, troque a conta no app do Discord antes de entrar.</p>
+      <p class="dica dica-conta">Tem mais de uma conta no Discord? Na tela do Discord, toque em <strong>“Não é você?”</strong> para escolher outra. No celular, troque a conta no app do Discord antes de entrar.</p>
+      <button id="usar-codigo" type="button" class="link-botao">Não consegue entrar com o Discord? Usar código de acesso</button>
     </div>
+    <!-- Sem Discord: entra com o código que a liderança gerou no cadastro -->
+    <form id="login-codigo-bloco" novalidate hidden>
+      <p class="modal-texto">Digite o código de acesso que a liderança gerou para você (vale uma vez só).</p>
+      <label class="rotulo" for="codigo-acesso">Código de acesso</label>
+      <input id="codigo-acesso" type="text" maxlength="12" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX">
+      <button id="codigo-entrar" type="submit" class="botao-primario botao-bloco">Entrar com o código</button>
+      <button id="codigo-voltar" type="button" class="botao-secundario botao-bloco">Voltar e entrar com o Discord</button>
+    </form>
     <div id="login-nao-cadastrado" hidden>
       <!-- Sem cadastro: pede o acesso -->
       <form id="form-solicitar" novalidate hidden>
@@ -190,6 +199,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=9"></script>
-<script src="js/calculadora.js?v=11"></script>
+<script src="js/calculadora.js?v=12"></script>
 </body>
 </html>

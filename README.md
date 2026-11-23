@@ -73,6 +73,16 @@ Ao trocar a tabela de preços, salve com um nome novo (`tabela_v2.png`) e atuali
 
    Para descobrir o ID: Discord → Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no seu nome → **Copiar ID do usuário**. Depois disso, cada pessoa pede o cadastro ao entrar e a liderança aprova no painel.
 
+### 2.0.1 Acesso por código (quem não consegue entrar com o Discord)
+
+Algumas contas do Discord não entram pelo Supabase (ex.: conta sem e-mail verificado). Para elas:
+
+1. No Supabase, em **Authentication → Sign In / Providers**, ligue **Allow anonymous sign-ins** (uma vez só).
+2. No painel, **Usuários → Editar** a pessoa (ou marque *Gerar código de acesso ao salvar* no **+ Novo usuário**) → **🔑 Código de acesso** → **Gerar código**.
+3. Passe o código (ex.: `K7QM-3XPA`) para a pessoa. Na tela de login, ela toca em **"Não consegue entrar com o Discord? Usar código de acesso"** e digita o código.
+
+O código vale **uma vez só, por 24 h**, e gerar outro cancela o anterior. O aparelho fica conectado como aquele cadastro (mesmo perfil, vendas e cargos do ID do Discord cadastrado). Se a pessoa sair do site, precisa de um código novo. **🚫 Desconectar aparelhos** corta o acesso na hora (desativar o usuário também). Quem não é líder só gera código para usuários com permissões que ele mesmo tem; para um líder, só o líder.
+
 ### 2.1 Nomes do servidor do Discord (bot)
 
 O site mostra o nome que cada pessoa usa **no servidor** do Discord. Quem busca esses nomes é o próprio Supabase, usando a credencial de um bot: **nenhum programa fica rodando nem precisa de hospedagem** (o bot aparece sempre offline no servidor, isso é normal).

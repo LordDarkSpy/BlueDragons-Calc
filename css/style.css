@@ -1116,3 +1116,13 @@ a.botao-discord { display: inline-flex; align-items: center; justify-content: ce
 .pedido-mensagem { max-width: 280px; white-space: pre-wrap; overflow-wrap: anywhere; }
 #form-solicitar textarea { width: 100%; }
 .dica-conta { text-align: center; margin-top: 8px; }
+
+/* Código de acesso (sem Discord) */
+.codigo-grande {
+  margin: 12px 0 4px; padding: 14px; border-radius: 12px; text-align: center;
+  background: var(--cartao-item); border: 1px dashed var(--azul);
+  font-family: ui-monospace, Consolas, monospace; font-size: 1.9rem; font-weight: 700; letter-spacing: 0.18em;
+}
+.bloco-codigo { padding-top: 8px; border-top: 1px solid var(--borda); }
+#login-codigo-bloco input { text-transform: uppercase; letter-spacing: 0.12em; font-family: ui-monospace, Consolas, monospace; text-align: center; }
+.link-botao { background: none; border: 0; padding: 6px 0; color: var(--azul-claro); text-decoration: underline; cursor: pointer; font: inherit; width: 100%; }

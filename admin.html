@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=25">
+<link rel="stylesheet" href="css/style.css?v=26">
 </head>
 <body>
 
@@ -281,6 +281,26 @@
   </form>
 </div>
 
+<!-- Código de acesso (para quem não consegue entrar com o Discord) -->
+<div id="modal-codigo" class="modal-fundo" hidden>
+  <div class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="codigo-titulo">
+    <div class="sucesso-icone" aria-hidden="true">🔑</div>
+    <h2 id="codigo-titulo">Código de acesso</h2>
+    <p class="modal-texto">Para quem não consegue entrar com o Discord (ex.: conta sem e-mail). A pessoa toca em
+      <strong>“Não consegue entrar com o Discord?”</strong> na tela de login e digita o código.</p>
+    <div id="codigo-gerado" hidden>
+      <p class="codigo-grande" id="codigo-valor"></p>
+      <p class="dica" id="codigo-validade"></p>
+      <button id="codigo-copiar" type="button" class="botao botao-bloco">📋 Copiar código</button>
+    </div>
+    <p id="codigo-status" class="dica"></p>
+    <p id="codigo-erro" class="status erro" hidden></p>
+    <button id="codigo-gerar" type="button" class="botao-primario botao-bloco">🔑 Gerar código</button>
+    <button id="codigo-revogar" type="button" class="botao botao-bloco" hidden>🚫 Desconectar aparelhos</button>
+    <button id="codigo-fechar" type="button" class="botao-secundario botao-bloco">Fechar</button>
+  </div>
+</div>
+
 <!-- Cadastro de parceria -->
 <div id="modal-parceria" class="modal-fundo" hidden>
   <form id="form-parceria" class="modal modal-largo cartao" role="dialog" aria-modal="true" aria-labelledby="parceria-titulo" novalidate>
@@ -419,6 +439,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=9"></script>
-<script src="js/admin.js?v=29"></script>
+<script src="js/admin.js?v=30"></script>
 </body>
 </html>

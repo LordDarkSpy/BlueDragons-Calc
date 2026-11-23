@@ -74,7 +74,9 @@
   function abrirModalVendedor(perfil, editarPedido) {
     clearInterval(timerAguardando);
     timerAguardando = null;
-    const naoCadastrado = !!(perfil && !perfil.cadastrado);
+    // Sessão anônima ainda sem código válido (sem ID do Discord): mostra o login de novo.
+    const naoCadastrado = !!(perfil && !perfil.cadastrado && perfil.discord_id);
+    $("login-codigo-bloco").hidden = true;
     $("login-entrar-bloco").hidden = naoCadastrado;
     $("login-nao-cadastrado").hidden = !naoCadastrado;
     $("modal-vendedor-titulo").textContent = naoCadastrado ? (perfil.desativado ? "Acesso desativado" : "Solicitar cadastro") : "Identifique-se";
@@ -121,6 +123,53 @@
     verificarLogin();
   });
   $("solicitar-editar").addEventListener("click", () => abrirModalVendedor(perfilLogado, true));
+
+  // ---------------------------------------------------------------- entrar com código (sem Discord)
+
+  $("usar-codigo").addEventListener("click", () => {
+    mostrarErroVendedor("");
+    $("login-entrar-bloco").hidden = true;
+    $("login-codigo-bloco").hidden = false;
+    $("modal-vendedor-titulo").textContent = "Entrar com código";
+    $("codigo-acesso").focus();
+  });
+  $("codigo-voltar").addEventListener("click", () => {
+    mostrarErroVendedor("");
+    $("login-codigo-bloco").hidden = true;
+    $("login-entrar-bloco").hidden = false;
+    $("modal-vendedor-titulo").textContent = "Identifique-se";
+  });
+  let entrandoComCodigo = false; // a sessão anônima é criada antes de conferir o código
+  $("login-codigo-bloco").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const codigo = $("codigo-acesso").value.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    if (codigo.length !== 8) { mostrarErroVendedor("O código tem 8 letras e números (ex.: K7QM-3XPA)."); return $("codigo-acesso").focus(); }
+    const botao = $("codigo-entrar");
+    botao.disabled = true;
+    botao.textContent = "⏳ Conferindo…";
+    entrandoComCodigo = true;
+    try {
+      // O código precisa de uma sessão: cria uma anônima (se já houver uma, reaproveita).
+      const { data: { session } } = await db.auth.getSession();
+      if (!session) {
+        const { error } = await db.auth.signInAnonymously();
+        if (error) throw /anonymous/i.test(error.message) ? new Error("O acesso por código ainda não foi ativado no Supabase (login anônimo). Avise a liderança.") : error;
+      }
+      const { data, error } = await db.rpc("resgatar_codigo_acesso", { p_codigo: codigo });
+      if (error) throw error;
+      if (!data.ok) throw new Error(data.erro);
+      $("codigo-acesso").value = "";
+      mostrarErroVendedor("");
+      BD.toast(`Bem-vindo(a), ${data.nome}!`, "ok");
+      await verificarLogin();
+    } catch (erro) {
+      mostrarErroVendedor(BD.mensagemErro(erro));
+    } finally {
+      botao.disabled = false;
+      botao.textContent = "Entrar com o código";
+      entrandoComCodigo = false;
+    }
+  });
 
   async function verificarLogin() {
     let perfil;
@@ -468,7 +517,7 @@
   carregarCatalogo();
   const erroLogin = BD.erroDoLogin();
   verificarLogin().then(() => { if (erroLogin) mostrarErroVendedor('O Discord não completou o login: ' + erroLogin); });
-  db.auth.onAuthStateChange((evento) => { if (evento === 'SIGNED_IN' && !sessao) verificarLogin(); });
+  db.auth.onAuthStateChange((evento) => { if (evento === 'SIGNED_IN' && !sessao && !entrandoComCodigo) verificarLogin(); });
   // "Serve para": abre ao clicar na imagem (no computador também aparece ao passar o mouse).
   function fecharDicas(exceto) {
     document.querySelectorAll('[data-dica].aberto').forEach((b) => {
