@@ -133,8 +133,8 @@
         <label class="rotulo" for="solicitar-nome">Seu nome <span class="obrigatorio">*</span></label>
         <input id="solicitar-nome" type="text" maxlength="40" autocomplete="off">
         <label class="rotulo" for="solicitar-pagamento">ID para pagamento <span class="obrigatorio">*</span></label>
-        <input id="solicitar-pagamento" type="text" maxlength="40" autocomplete="off" placeholder="Ex.: 10234">
-        <p class="dica">É o ID em que você recebe as comissões das suas vendas.</p>
+        <input id="solicitar-pagamento" type="text" maxlength="40" autocomplete="off" placeholder="Seu passaporte da cidade (ex.: 10234)">
+        <p class="dica">Use o seu <strong>passaporte da cidade</strong>: é nele que você recebe as comissões das suas vendas.</p>
         <label class="rotulo" for="solicitar-mensagem">Mensagem (opcional)</label>
         <textarea id="solicitar-mensagem" maxlength="300" rows="2" placeholder="Ex.: quem te indicou, seu cargo…"></textarea>
         <button id="solicitar-enviar" type="submit" class="botao-primario botao-bloco">📨 Solicitar cadastro</button>
@@ -162,9 +162,9 @@
   <form id="form-id-pagamento" class="modal cartao" role="dialog" aria-modal="true" aria-labelledby="id-pagamento-titulo" novalidate>
     <div class="sucesso-icone" aria-hidden="true">🆔</div>
     <h2 id="id-pagamento-titulo">Cadastre seu ID para pagamento</h2>
-    <p class="modal-texto">É o ID em que você recebe as comissões das suas vendas. Quem fizer o pagamento vai ver este ID.</p>
+    <p class="modal-texto">Use o seu <strong>passaporte da cidade</strong>: é nele que você recebe as comissões das suas vendas. Quem fizer o pagamento vai ver este ID.</p>
     <label class="rotulo" for="id-pagamento-valor">ID para pagamento <span class="obrigatorio">*</span></label>
-    <input id="id-pagamento-valor" type="text" maxlength="40" autocomplete="off" placeholder="Ex.: 10234">
+    <input id="id-pagamento-valor" type="text" maxlength="40" autocomplete="off" placeholder="Seu passaporte da cidade (ex.: 10234)">
     <p id="id-pagamento-erro" class="status erro" hidden></p>
     <button id="id-pagamento-salvar" type="submit" class="botao-primario botao-bloco">💾 Salvar meu ID</button>
     <button id="id-pagamento-depois" type="button" class="botao-secundario botao-bloco">Agora não</button>
@@ -199,6 +199,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
 <script src="js/comum.js?v=9"></script>
-<script src="js/calculadora.js?v=12"></script>
+<script src="js/calculadora.js?v=13"></script>
 </body>
 </html>
