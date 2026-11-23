@@ -28,7 +28,7 @@
   $('vendas-entrar').addEventListener('click', async (e) => {
     const botao = e.currentTarget;
     const { data: { session } } = await db.auth.getSession();
-    if (session) await db.auth.signOut(); // "entrar com outra conta"
+    if (session) await BD.sair(); // "entrar com outra conta"
     botao.disabled = true;
     botao.textContent = '⏳ Abrindo o Discord…';
     try {
@@ -51,7 +51,7 @@
     BD.ajustarLinksTopo(perfil);
     $('vendas-entrar').textContent = 'Entrar com outra conta';
     if (!perfil.cadastrado && !perfil.lider) {
-      return mostrarLogin(`Sua conta do Discord ainda não está cadastrada (ID ${perfil.discord_id || '—'}). Peça para a liderança liberar seu acesso.`);
+      return mostrarLogin(perfil.solicitacao && perfil.solicitacao.status === 'pendente' ? 'Seu pedido de cadastro está aguardando a aprovação da liderança.' : 'Sua conta do Discord ainda não tem cadastro. Peça o acesso na calculadora (página inicial).');
     }
     if (!pode('ver_vendas')) {
       return mostrarLogin('O seu perfil não tem acesso às vendas. Peça à liderança para ajustar o seu perfil.');

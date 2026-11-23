@@ -4,11 +4,11 @@ Site estático (HTML/CSS/JS puro) hospedado no GitHub Pages, com banco de dados 
 
 Substitui a planilha "VENDAS MERCADO OCULTO" (abas SERRA, PENDRIVE, PAGAMENTO e Base Valores e Craft):
 
-- **Calculadora** (`index.html`): o vendedor entra com a conta do **Discord**, escolhe **Pista** ou **Parceria**, monta o pedido e registra a venda (com uma tela de confirmação antes de gravar). Na parceria, o **cliente é o próprio parceiro**; na pista, o cliente é opcional. Perfis "só visualizar" simulam os valores sem registrar.
+- **Calculadora** (`index.html`): o vendedor entra com a conta do **Discord** (quem ainda não tem cadastro **pede o acesso** ali mesmo, com nome e ID para pagamento), escolhe **Pista** ou **Parceria**, monta o pedido e registra a venda (com uma tela de confirmação antes de gravar). Na parceria, o **cliente é o próprio parceiro**; na pista, o cliente é opcional. Perfis "só visualizar" simulam os valores sem registrar.
 - **Vendas** (`vendas.html`): histórico de vendas com filtros, exportação CSV e cancelamento/reativação com justificativa. Fica fora do painel: abre para os perfis com a permissão **Vendas**, e só os perfis com **Cancelar / reativar vendas** veem esses botões.
 - **Ranking** (`ranking.html`): pódio e lista dos vendedores por total vendido, com a foto do Discord. Qualquer vendedor cadastrado vê; a comissão não aparece.
 - **Painel** (`admin.html`): relatório semanal (totais, ranking, **pagamento dos vendedores** com o ID para pagamento e **craft usado**), cadastro de **usuários**, parcerias, produtos, gestão de **perfis** e do **agendamento do relatório semanal** (dia, horário e simulação, alterados pelo líder) e configuração do Discord (webhooks, bot e fórum, só o DEV).
-- **Perfis de acesso** (aba Gestão, só o líder altera): cada perfil escolhe as páginas (Calculadora, Ranking, Vendas, Painel), as abas do painel e as ações (**realizar vendas**, cadastrar/editar parcerias, encerrar, pagar, cancelar vendas, usuários, produtos). Sem **Realizar vendas**, a calculadora só simula. Cada usuário recebe um perfil no cadastro, e um perfil também pode vir de um **cargo do Discord**. O **perfil padrão** (começa como *Só calculadora (visualizar)*) vale para todo usuário cadastrado, soma com os outros e não pode ser excluído. Na primeira execução do `schema.sql`, os acessos antigos por cargo viram perfis e todos os cadastros recebem o perfil **Vendedor**.
+- **Perfis de acesso** (aba Gestão, só o líder altera): cada perfil escolhe as páginas (Calculadora, Ranking, Vendas, Painel), as abas do painel e as ações (**realizar vendas**, cadastrar/editar parcerias, encerrar, pagar, cancelar vendas, usuários, **aprovar pedidos de cadastro**, produtos). Sem **Realizar vendas**, a calculadora só simula. Cada usuário recebe um perfil no cadastro, e um perfil também pode vir de um **cargo do Discord**. O **perfil padrão** (começa como *Só calculadora (visualizar)*) vale para todo usuário cadastrado, soma com os outros e não pode ser excluído. Na primeira execução do `schema.sql`, os acessos antigos por cargo viram perfis e todos os cadastros recebem o perfil **Vendedor**.
 - **Notificações (🔔)**: ao entrar, cada usuário vê o que chegou desde a última visita. O 🔔 no topo reabre a lista dos últimos 30 dias.
   - Ao cadastrar, editar, encerrar ou reativar uma parceria, e ao cadastrar, editar ou excluir um produto, o painel pergunta **"Notificar alteração?"** (com mensagem adicional opcional). Sem confirmar, ninguém é avisado.
   - Quem recebe um pagamento de comissão recebe uma notificação só para ele.
@@ -62,7 +62,7 @@ Ao trocar a tabela de preços, salve com um nome novo (`tabela_v2.png`) e atuali
 2. No Supabase, em **Authentication → Sign In / Providers**:
    - ative **Discord** e cole o Client ID e o Secret;
    - desative **Email** (ninguém entra por e-mail);
-   - deixe *Allow new users to sign up* **ligado**: o primeiro login pelo Discord cria a conta. Quem não estiver cadastrado na tabela de vendedores entra, mas não vê nem registra nada.
+   - deixe *Allow new users to sign up* **ligado**: o primeiro login pelo Discord cria a conta. Quem não estiver cadastrado na tabela de vendedores não vê nem registra nada: a tela de login mostra o formulário de **pedido de cadastro**.
 3. Em **Authentication → URL Configuration**, coloque o endereço do site em *Site URL* e adicione `https://SEU-USUARIO.github.io/BlueDragons-Calc/**` em *Redirect URLs*.
 4. Cadastre o primeiro administrador no **SQL Editor** (troque o nome e o ID do Discord):
 
@@ -71,7 +71,7 @@ Ao trocar a tabela de preços, salve com um nome novo (`tabela_v2.png`) e atuali
    values ('Seu nome', '123456789012345678', true);
    ```
 
-   Para descobrir o ID: Discord → Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no seu nome → **Copiar ID do usuário**. Os próximos cadastros são feitos pelo painel.
+   Para descobrir o ID: Discord → Configurações → Avançado → Modo desenvolvedor; depois clique com o botão direito no seu nome → **Copiar ID do usuário**. Depois disso, cada pessoa pede o cadastro ao entrar e a liderança aprova no painel.
 
 ### 2.1 Nomes do servidor do Discord (bot)
 
@@ -115,7 +115,7 @@ Abra `admin.html`, clique em **Entrar com Discord** e:
 
 1. **Produtos** → confira os preços (os da tabela atual já vêm cadastrados).
 2. **Gestão** → confira os perfis (Vendedor, Só calculadora, Só parcerias…) e ligue cargos do Discord a eles, se quiser.
-3. **Usuários** → cadastre cada pessoa com o **ID do Discord** (é com ele que ela entra), o **ID para pagamento** e o **perfil**. Marque *Administrador manual / líder* só para quem gerencia tudo.
+3. **Usuários** → os **pedidos de cadastro** aparecem no topo da aba (com um número na aba e um aviso ao abrir o painel). **Aprovar** cria o cadastro com o perfil escolhido e avisa a pessoa no 🔔; **Recusar** pede um motivo, que a pessoa vê ao entrar (ela pode pedir de novo). Aprova o líder ou quem tem a permissão **📥 Aprovar / recusar pedidos de cadastro** (que só dá perfis com permissões que ele mesmo tem). Dá para cadastrar alguém à mão em **+ Novo usuário**. Marque *Administrador manual / líder* só para quem gerencia tudo.
 4. **Parcerias** → cadastre as organizações parceiras.
 5. **Discord** → cole as URLs dos webhooks (Canal → Editar → Integrações → Webhooks → Novo webhook → Copiar URL), clique em **Testar** e salve.
 

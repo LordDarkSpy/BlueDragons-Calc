@@ -69,13 +69,58 @@
     els.erroVendedor.hidden = !texto;
   }
 
-  function abrirModalVendedor(perfil) {
+  // Sem cadastro: formulário do pedido, aguardando aprovação (confere sozinho a cada 30 s) ou cadastro desativado.
+  let timerAguardando = null;
+  function abrirModalVendedor(perfil, editarPedido) {
+    clearInterval(timerAguardando);
+    timerAguardando = null;
     const naoCadastrado = !!(perfil && !perfil.cadastrado);
     $("login-entrar-bloco").hidden = naoCadastrado;
     $("login-nao-cadastrado").hidden = !naoCadastrado;
-    if (naoCadastrado) $("meu-discord-id").value = perfil.discord_id || "";
-    BD.abrirModal(els.modalVendedor, naoCadastrado ? $("copiar-discord-id") : $("entrar-discord"));
+    $("modal-vendedor-titulo").textContent = naoCadastrado ? (perfil.desativado ? "Acesso desativado" : "Solicitar cadastro") : "Identifique-se";
+    if (!naoCadastrado) return BD.abrirModal(els.modalVendedor, $("entrar-discord"));
+
+    const pedido = perfil.solicitacao;
+    const aguardando = !perfil.desativado && pedido && pedido.status === "pendente" && !editarPedido;
+    const formulario = !perfil.desativado && !aguardando;
+    $("login-desativado").hidden = !perfil.desativado;
+    $("solicitar-aguardando").hidden = !aguardando;
+    $("form-solicitar").hidden = !formulario;
+    $("meu-discord-id").value = perfil.discord_id || "";
+    if (aguardando) {
+      $("solicitar-quando").textContent = pedido.criado_em ? ` em ${BD.dataHoraBR(pedido.criado_em)}` : "";
+      timerAguardando = setInterval(() => { if (!document.hidden) verificarLogin(); }, 30000);
+    }
+    if (formulario) {
+      const recusado = pedido && pedido.status === "recusada";
+      $("solicitar-recusado").hidden = !recusado;
+      $("solicitar-recusado").textContent = recusado ? `Seu pedido anterior foi recusado: ${pedido.motivo || "sem motivo informado"}. Você pode pedir de novo.` : "";
+      if (!$("solicitar-nome").value) $("solicitar-nome").value = ((pedido && pedido.nome) || perfil.apelido || "").slice(0, 40);
+      if (!$("solicitar-pagamento").value) $("solicitar-pagamento").value = (pedido && pedido.id_pagamento) || "";
+      if (!$("solicitar-mensagem").value) $("solicitar-mensagem").value = (pedido && pedido.mensagem) || "";
+      $("solicitar-enviar").textContent = pedido && pedido.status === "pendente" ? "💾 Salvar pedido" : "📨 Solicitar cadastro";
+    }
+    BD.abrirModal(els.modalVendedor, perfil.desativado ? $("copiar-discord-id") : aguardando ? $("tentar-novamente") : $("solicitar-nome"));
   }
+
+  $("form-solicitar").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const nome = $("solicitar-nome").value.trim();
+    const pagamento = $("solicitar-pagamento").value.trim();
+    if (nome.length < 2) { mostrarErroVendedor("Informe o seu nome (2 letras ou mais)."); return $("solicitar-nome").focus(); }
+    if (!pagamento) { mostrarErroVendedor("Informe o seu ID para pagamento."); return $("solicitar-pagamento").focus(); }
+    const botao = $("solicitar-enviar");
+    botao.disabled = true;
+    const { error } = await db.rpc("solicitar_cadastro", {
+      p_nome: nome, p_id_pagamento: pagamento, p_mensagem: $("solicitar-mensagem").value.trim() || null,
+    });
+    botao.disabled = false;
+    if (error) return mostrarErroVendedor(BD.mensagemErro(error));
+    mostrarErroVendedor("");
+    BD.toast("Pedido de cadastro enviado.", "ok");
+    verificarLogin();
+  });
+  $("solicitar-editar").addEventListener("click", () => abrirModalVendedor(perfilLogado, true));
 
   async function verificarLogin() {
     let perfil;
@@ -89,6 +134,7 @@
     BD.ajustarLinksTopo(perfil);
     perfilLogado = perfil;
     if (perfil && perfil.cadastrado) {
+      clearInterval(timerAguardando);
       mostrarSemCalculadora(!BD.pode(perfil, "ver_calculadora"));
       definirSessao({ id: perfil.id, nome: perfil.nome, registra: BD.pode(perfil, "registrar_venda") });
       mostrarErroVendedor("");
@@ -116,7 +162,7 @@
   });
 
   async function sair() {
-    await db.auth.signOut();
+    await BD.sair();
     definirSessao(null);
     abrirModalVendedor(null);
   }

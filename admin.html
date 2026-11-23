@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=23">
+<link rel="stylesheet" href="css/style.css?v=25">
 </head>
 <body>
 
@@ -36,11 +36,12 @@
     <p class="modal-texto">Entre com a sua conta do Discord.</p>
     <p id="login-erro" class="status erro" hidden></p>
     <button id="login-entrar" type="button" class="botao-discord botao-bloco">Entrar com Discord</button>
+    <p class="dica dica-conta">Tem mais de uma conta no Discord? Na tela do Discord, toque em <strong>“Não é você?”</strong> para escolher outra. No celular, troque a conta no app do Discord antes de entrar.</p>
   </section>
 
   <section id="sem-permissao" class="cartao login-admin" hidden>
     <h2 style="justify-content:center">Sem permissão</h2>
-    <p class="modal-texto">O seu perfil não tem acesso ao painel. Peça à liderança para ajustar o seu perfil (aba Gestão → Perfis).</p>
+    <p id="sem-permissao-texto" class="modal-texto">O seu perfil não tem acesso ao painel. Peça à liderança para ajustar o seu perfil (aba Gestão → Perfis).</p>
     <label class="rotulo" for="sem-permissao-id">Seu ID do Discord</label>
     <input id="sem-permissao-id" type="text" readonly>
     <button id="sair-sem-permissao" type="button" class="botao botao-bloco">Entrar com outra conta</button>
@@ -91,6 +92,11 @@
 
     <!-- Usuários -->
     <section id="aba-vendedores" class="painel" role="tabpanel" hidden>
+      <div id="solicitacoes-cartao" class="cartao" hidden>
+        <h2>📥 Pedidos de cadastro <span id="solicitacoes-total" class="etiqueta pendente"></span></h2>
+        <p class="dica">Quem entra com o Discord sem cadastro pede o acesso aqui. Ao aprovar, escolha o perfil; ao recusar, a pessoa vê o motivo e pode pedir de novo.</p>
+        <div id="solicitacoes-tabela" class="tabela-wrap"><p class="carregando">Carregando…</p></div>
+      </div>
       <div class="cartao">
         <h2>Usuários <span><button id="sincronizar-nomes" type="button" class="botao botao-pequeno">🔄 Atualizar nomes do Discord</button> <button type="button" class="botao-primario botao-pequeno" data-novo="vendedor">+ Novo usuário</button></span></h2>
         <p class="dica">Cada usuário tem um <strong>perfil</strong> (Vendedor, Só calculadora…) que define o que ele vê e faz. Os perfis são criados pelo líder na aba Gestão.</p>
@@ -412,7 +418,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=8"></script>
-<script src="js/admin.js?v=27"></script>
+<script src="js/comum.js?v=9"></script>
+<script src="js/admin.js?v=29"></script>
 </body>
 </html>

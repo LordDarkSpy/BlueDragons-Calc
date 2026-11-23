@@ -117,7 +117,7 @@
   $('ranking-entrar').addEventListener('click', async (e) => {
     const botao = e.currentTarget;
     const { data: { session } } = await db.auth.getSession();
-    if (session) await db.auth.signOut(); // "entrar com outra conta"
+    if (session) await BD.sair(); // "entrar com outra conta"
     botao.disabled = true;
     botao.textContent = '⏳ Abrindo o Discord…';
     try {
@@ -140,7 +140,7 @@
     if (!perfil) return mostrarLogin('Entre com a sua conta do Discord para ver o ranking.', erroLogin && 'O Discord não completou o login: ' + erroLogin);
     if (!perfil.cadastrado && !perfil.admin) {
       $('ranking-entrar').textContent = 'Entrar com outra conta';
-      return mostrarLogin(`Sua conta do Discord ainda não está cadastrada (ID ${perfil.discord_id || '—'}). Peça para a liderança liberar seu acesso.`);
+      return mostrarLogin(perfil.solicitacao && perfil.solicitacao.status === 'pendente' ? 'Seu pedido de cadastro está aguardando a aprovação da liderança.' : 'Sua conta do Discord ainda não tem cadastro. Peça o acesso na calculadora (página inicial).');
     }
     BD.ajustarLinksTopo(perfil);
     if (!BD.pode(perfil, 'ver_ranking')) {

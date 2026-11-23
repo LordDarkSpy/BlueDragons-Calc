@@ -1103,3 +1103,16 @@ button.item-icone.tem-dica:focus-visible .balao-dica { display: block; }
 .bot-foto { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; flex: none; background: rgba(255,255,255,.06); }
 .bot-aparencia-campos { flex: 1; min-width: 220px; }
 a.botao-discord { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; border-radius: 8px; }
+
+/* Pedidos de cadastro (painel → Usuários) */
+
+.contador-aba {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  margin-left: 4px; border-radius: 999px; background: var(--vermelho); color: #fff; font-size: 0.68rem; font-weight: 700;
+}
+.contador-aba:empty { display: none; }
+.pedido-pessoa { display: flex; align-items: center; gap: 10px; }
+.pedido-pessoa img, .pedido-pessoa .avatar-inicial { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.pedido-mensagem { max-width: 280px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#form-solicitar textarea { width: 100%; }
+.dica-conta { text-align: center; margin-top: 8px; }

@@ -441,7 +441,8 @@ language sql immutable
 as $$ select array[
   'ver_ranking', 'ver_calculadora', 'registrar_venda', 'ver_painel',
   'ver_relatorio', 'ver_vendas', 'ver_usuarios', 'ver_parcerias', 'ver_produtos', 'ver_gestao',
-  'editar_parcerias', 'encerrar_parceria', 'registrar_pagamento', 'cancelar_venda', 'gerenciar_vendedores', 'gerenciar_produtos', 'enviar_notificacoes'] $$;
+  'editar_parcerias', 'encerrar_parceria', 'registrar_pagamento', 'cancelar_venda', 'gerenciar_vendedores', 'gerenciar_produtos', 'enviar_notificacoes',
+  'aprovar_cadastros'] $$;
 
 -- Permissões do usuário logado: o líder tem todas; os outros, as do perfil padrão, as do perfil do cadastro
 -- e as dos perfis ligados a cargos que a pessoa tem no Discord, somadas.
@@ -562,6 +563,32 @@ $$;
 drop trigger if exists perfis_padrao_protegido on public.perfis;
 create trigger perfis_padrao_protegido before insert or update or delete on public.perfis
   for each row execute function public._perfil_padrao_protegido();
+
+-- Solicitações de cadastro: quem entra com o Discord sem cadastro pede o acesso, e quem tem a
+-- permissão "aprovar_cadastros" (ou o líder) aprova escolhendo o perfil, ou recusa com um motivo.
+-- Aprovada, a linha sai daqui (a pessoa passa a estar em vendedores). Recusada, fica com o motivo
+-- até a pessoa pedir de novo.
+-- Migração (uma vez só, quando a tabela ainda não existe): quem cadastrava usuários passa a aprovar cadastros.
+do $$
+begin
+  if to_regclass('public.solicitacoes_cadastro') is null then
+    update public.perfis set permissoes = permissoes || array['aprovar_cadastros']
+     where 'gerenciar_vendedores' = any (permissoes) and not ('aprovar_cadastros' = any (permissoes));
+  end if;
+end $$;
+create table if not exists public.solicitacoes_cadastro (
+  id uuid primary key default gen_random_uuid(),
+  discord_id text not null unique check (discord_id ~ '^\d{17,20}$'),
+  nome text not null check (length(btrim(nome)) between 2 and 40),
+  id_pagamento text check (id_pagamento is null or length(id_pagamento) <= 40),
+  mensagem text check (mensagem is null or length(mensagem) <= 300),
+  avatar text,
+  status text not null default 'pendente' check (status in ('pendente', 'recusada')),
+  motivo text,
+  decidido_por text,
+  decidido_em timestamptz,
+  criado_em timestamptz not null default now()
+);
 
 -- Produtos: categoria e materiais do craft reaproveitam a grafia já usada (ignorando maiúsculas),
 -- tiram espaços sobrando e juntam materiais repetidos.
@@ -717,6 +744,14 @@ create policy discord_cargos_admin on public.discord_cargos for select to authen
 drop policy if exists vendedores_admin on public.vendedores;
 create policy vendedores_admin on public.vendedores for select to authenticated
   using (public.is_admin());
+
+-- Solicitações de cadastro: só quem aprova lê. Pedido, aprovação e recusa só pelas funções.
+alter table public.solicitacoes_cadastro enable row level security;
+revoke all on public.solicitacoes_cadastro from anon, authenticated;
+grant select on public.solicitacoes_cadastro to authenticated;
+drop policy if exists solicitacoes_aprovar on public.solicitacoes_cadastro;
+create policy solicitacoes_aprovar on public.solicitacoes_cadastro for select to authenticated
+  using (public.tem_permissao('aprovar_cadastros'));
 
 -- Vendas: só o admin lê. Registro pela função registrar_venda; cancelamento só pela
 -- função cancelar_venda (exige justificativa e a permissão "cancelar_venda").
@@ -900,6 +935,12 @@ as $$
     'dev', public._e_dev(),
     'perfil', (select nome from public.perfis where id = v.perfil_id),
     'id_pagamento', v.id_pagamento,
+    -- Sem cadastro ativo: o cadastro existe mas foi desativado? E o pedido de cadastro (pendente/recusado)?
+    'desativado', v.id is null and exists (select 1 from public.vendedores x where x.discord_id = public._discord_id()),
+    'solicitacao', case when v.id is null then (
+      select jsonb_build_object('status', s.status, 'motivo', s.motivo, 'criado_em', s.criado_em, 'decidido_em', s.decidido_em,
+                                'nome', s.nome, 'id_pagamento', s.id_pagamento, 'mensagem', s.mensagem)
+      from public.solicitacoes_cadastro s where s.discord_id = public._discord_id()) end,
     'permissoes', (select coalesce(jsonb_object_agg(p, p = any (m.lista)), '{}'::jsonb)
                    from unnest(public._permissoes_validas()) p, (select public._minhas_permissoes() as lista) m)
   )
@@ -1431,6 +1472,126 @@ begin
      returning id into v_id;
   end if;
   return v_id;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Solicitações de cadastro
+-- -----------------------------------------------------------------------------
+
+-- Quem entrou com o Discord e não tem cadastro pede o acesso (pedir de novo atualiza o pedido;
+-- depois de uma recusa, volta a ficar pendente).
+create or replace function public.solicitar_cadastro(p_nome text, p_id_pagamento text, p_mensagem text default null)
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_discord text := public._discord_id();
+  v_nome text := regexp_replace(btrim(coalesce(p_nome, '')), '\s+', ' ', 'g');
+  v_pag text := nullif(btrim(coalesce(p_id_pagamento, '')), '');
+  v_msg text := nullif(btrim(coalesce(p_mensagem, '')), '');
+  v_ativo boolean;
+  v_avatar text;
+begin
+  if v_discord is null then
+    raise exception 'Entre com o Discord para pedir o cadastro.';
+  end if;
+  select ativo into v_ativo from public.vendedores where discord_id = v_discord;
+  if found then
+    if v_ativo then raise exception 'Você já está cadastrado. Atualize a página.'; end if;
+    raise exception 'Seu cadastro foi desativado. Fale com a liderança.';
+  end if;
+  if length(v_nome) < 2 or length(v_nome) > 40 then
+    raise exception 'O nome precisa ter de 2 a 40 caracteres.';
+  end if;
+  if v_pag is null then raise exception 'Informe o seu ID para pagamento.'; end if;
+  if length(v_pag) > 40 then raise exception 'O ID para pagamento pode ter no máximo 40 caracteres.'; end if;
+  if length(v_msg) > 300 then raise exception 'A mensagem pode ter no máximo 300 caracteres.'; end if;
+  -- Foto da conta do Discord (só para quem aprova reconhecer a pessoa).
+  select u.raw_user_meta_data->>'avatar_url' into v_avatar from auth.users u where u.id = auth.uid();
+  if v_avatar !~ '^https://cdn\.discordapp\.com/' then v_avatar := null; end if;
+
+  insert into public.solicitacoes_cadastro (discord_id, nome, id_pagamento, mensagem, avatar)
+  values (v_discord, v_nome, v_pag, v_msg, v_avatar)
+  on conflict (discord_id) do update
+     set nome = excluded.nome, id_pagamento = excluded.id_pagamento, mensagem = excluded.mensagem,
+         avatar = excluded.avatar, status = 'pendente', motivo = null, decidido_por = null,
+         decidido_em = null, criado_em = now();
+end;
+$$;
+
+-- Aprova o pedido: cria o cadastro com o perfil escolhido e avisa a pessoa (🔔 só para ela).
+-- Quem não é líder só dá perfis com permissões que ele mesmo tem (igual ao cadastro de usuários).
+create or replace function public.aprovar_cadastro(p_id uuid, p_perfil_id uuid, p_nome text default null, p_id_pagamento text default null)
+returns uuid
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  s public.solicitacoes_cadastro;
+  v_id uuid;
+  v_nome text;
+  v_pag text;
+  v_perfil public.perfis;
+begin
+  if not public.tem_permissao('aprovar_cadastros') then
+    raise exception 'Você não tem permissão para aprovar cadastros.';
+  end if;
+  select * into s from public.solicitacoes_cadastro where id = p_id and status = 'pendente' for update;
+  if s.id is null then
+    raise exception 'Pedido não encontrado: talvez outra pessoa já tenha decidido. Atualize a lista.';
+  end if;
+  v_nome := regexp_replace(btrim(coalesce(nullif(btrim(coalesce(p_nome, '')), ''), s.nome)), '\s+', ' ', 'g');
+  v_pag := coalesce(nullif(btrim(coalesce(p_id_pagamento, '')), ''), s.id_pagamento);
+  if length(v_nome) < 2 or length(v_nome) > 40 then raise exception 'O nome precisa ter de 2 a 40 caracteres.'; end if;
+  if length(v_pag) > 40 then raise exception 'O ID para pagamento pode ter no máximo 40 caracteres.'; end if;
+  if p_perfil_id is not null then
+    select * into v_perfil from public.perfis where id = p_perfil_id;
+    if v_perfil.id is null then raise exception 'Perfil não encontrado.'; end if;
+    if not public._e_lider() and not (coalesce(v_perfil.permissoes, '{}') <@ public._minhas_permissoes()) then
+      raise exception 'Este perfil tem permissões que você não tem. Escolha outro ou peça ao líder.';
+    end if;
+  end if;
+  if exists (select 1 from public.vendedores where discord_id = s.discord_id) then
+    delete from public.solicitacoes_cadastro where id = s.id;
+    raise exception 'Já existe um cadastro com este ID do Discord (o pedido foi removido). Veja na lista de usuários.';
+  end if;
+
+  insert into public.vendedores (nome, discord_id, ativo, admin, perfil_id, id_pagamento, avatar)
+  values (v_nome, s.discord_id, true, false, p_perfil_id, v_pag, s.avatar)
+  returning id into v_id;
+  delete from public.solicitacoes_cadastro where id = s.id;
+  -- clock_timestamp: o aviso precisa ser "depois" do cadastro, criado nesta mesma transação.
+  insert into public.novidades (tipo, titulo, descricao, publicada, autor_uid, autor, para_vendedor, criado_em)
+  values ('mensagem', '✅ Cadastro aprovado',
+          'Bem-vindo(a) à ' || coalesce((select nome_organizacao from public.configuracoes where id = 1), 'organização') || '!'
+            || coalesce(' Seu perfil: ' || v_perfil.nome || '.', ''),
+          true, auth.uid(), public._nome_logado(), v_id, clock_timestamp());
+  return v_id;
+end;
+$$;
+
+-- Recusa o pedido com um motivo (a pessoa vê o motivo ao entrar e pode pedir de novo).
+create or replace function public.recusar_cadastro(p_id uuid, p_motivo text)
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_motivo text := nullif(btrim(coalesce(p_motivo, '')), '');
+begin
+  if not public.tem_permissao('aprovar_cadastros') then
+    raise exception 'Você não tem permissão para recusar cadastros.';
+  end if;
+  if v_motivo is null or length(v_motivo) < 3 then raise exception 'Escreva o motivo da recusa.'; end if;
+  if length(v_motivo) > 300 then raise exception 'O motivo pode ter no máximo 300 caracteres.'; end if;
+  update public.solicitacoes_cadastro
+     set status = 'recusada', motivo = v_motivo, decidido_por = public._nome_logado(), decidido_em = now()
+   where id = p_id and status = 'pendente';
+  if not found then
+    raise exception 'Pedido não encontrado: talvez outra pessoa já tenha decidido. Atualize a lista.';
+  end if;
 end;
 $$;
 
@@ -3095,6 +3256,9 @@ grant execute on function public.registrar_venda(jsonb, uuid, text, text) to aut
 grant execute on function public.minha_semana() to authenticated;
 grant execute on function public.ranking_vendedores(date, date) to authenticated;
 grant execute on function public.salvar_vendedor(uuid, text, text, boolean, boolean, uuid, text) to authenticated;
+grant execute on function public.solicitar_cadastro(text, text, text) to authenticated;
+grant execute on function public.aprovar_cadastro(uuid, uuid, text, text) to authenticated;
+grant execute on function public.recusar_cadastro(uuid, text) to authenticated;
 grant execute on function public.relatorio_periodo(date, date) to authenticated;
 grant execute on function public.enviar_relatorio_discord(date) to authenticated;
 grant execute on function public.registrar_pagamento(uuid, date, text) to authenticated;

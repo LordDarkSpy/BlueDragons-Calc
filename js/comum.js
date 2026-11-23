@@ -31,12 +31,22 @@
     },
 
     // Login com o Discord: sai do site e volta sempre para a calculadora (a home), já logado.
-    async entrarComDiscord() {
+    // Depois de sair (ou com trocarConta), o Discord mostra a tela de autorização em vez de voltar direto
+    // com a conta já aberta: nela, "Não é você?" deixa escolher outra conta do Discord.
+    async entrarComDiscord(trocarConta) {
+      const trocar = trocarConta || BD.lerSalvo('bluedragons-trocar-conta') === '1';
       const { error } = await BD.db.auth.signInWithOAuth({
         provider: 'discord',
-        options: { redirectTo: new URL('./', location.href).href },
+        options: { redirectTo: new URL('./', location.href).href, ...(trocar ? { queryParams: { prompt: 'consent' } } : {}) },
       });
       if (error) throw error;
+      BD.salvar('bluedragons-trocar-conta', '');
+    },
+
+    // Sai do site; o próximo login deixa escolher a conta do Discord.
+    async sair() {
+      BD.salvar('bluedragons-trocar-conta', '1');
+      await BD.db.auth.signOut();
     },
 
     // { discord_id, cadastrado, id, nome, admin } do usuário logado, ou null sem login.

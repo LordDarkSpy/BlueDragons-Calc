@@ -36,6 +36,7 @@
       { id: 'registrar_pagamento', nome: 'Registrar pagamentos', requer: 'ver_relatorio' },
       { id: 'cancelar_venda', nome: 'Cancelar / reativar vendas', requer: 'ver_vendas' },
       { id: 'gerenciar_vendedores', nome: 'Cadastrar e editar usuários', requer: 'ver_usuarios' },
+      { id: 'aprovar_cadastros', nome: '📥 Aprovar / recusar pedidos de cadastro', requer: 'ver_usuarios' },
       { id: 'gerenciar_produtos', nome: 'Cadastrar e editar produtos e preços', requer: 'ver_produtos' },
       { id: 'enviar_notificacoes', nome: '📢 Enviar notificações (aba Gestão)', requer: 'ver_gestao' },
     ] },
@@ -95,6 +96,11 @@
     meuPerfil = perfil;
     BD.ajustarLinksTopo(perfil);
     if (!perfil.admin) {
+      $("sem-permissao-texto").innerHTML = perfil.cadastrado
+        ? 'O seu perfil não tem acesso ao painel. Peça à liderança para ajustar o seu perfil (aba Gestão → Perfis).'
+        : perfil.solicitacao && perfil.solicitacao.status === 'pendente'
+          ? 'Seu pedido de cadastro está aguardando a aprovação da liderança.'
+          : 'Sua conta do Discord ainda não tem cadastro. <a href="./">Peça o acesso na calculadora</a>.';
       $("sem-permissao-id").value = perfil.discord_id || "";
       $("sem-permissao").hidden = false;
       return;
@@ -119,7 +125,7 @@
   });
 
   async function sair() {
-    await db.auth.signOut();
+    await BD.sair();
     painelIniciado = false;
     verificarAcesso();
   }
@@ -165,6 +171,11 @@
     await Promise.all([carregarListasBase(), carregarConfig()]);
     const salva = BD.lerSalvo('bluedragons-aba');
     abrirAba(carregadores[salva] ? salva : abasLiberadas()[0]);
+    // Avisa dos pedidos de cadastro aguardando (e confere de novo a cada 2 minutos).
+    contarSolicitacoes().then((n) => {
+      if (n) BD.toast(`📥 ${n} pedido${n === 1 ? '' : 's'} de cadastro aguardando aprovação (aba Usuários).`);
+    });
+    setInterval(() => { if (!document.hidden) contarSolicitacoes(); }, 120000);
   }
 
   async function carregarListasBase() {
@@ -542,9 +553,97 @@
 
   // ================================================================ vendedores
 
+  // ---------------------------------------------------------------- pedidos de cadastro
+
+  let solicitacoes = [];
+
+  // Busca os pedidos pendentes e mostra o número na aba Usuários.
+  async function contarSolicitacoes() {
+    if (!pode('aprovar_cadastros')) return 0;
+    const r = await db.from('solicitacoes_cadastro')
+      .select('id, discord_id, nome, id_pagamento, mensagem, avatar, criado_em')
+      .eq('status', 'pendente').order('criado_em');
+    solicitacoes = r.error ? [] : r.data || [];
+    const aba = document.querySelector('[data-aba="vendedores"]');
+    let contador = aba.querySelector('.contador-aba');
+    if (!contador) {
+      contador = document.createElement('span');
+      contador.className = 'contador-aba';
+      aba.appendChild(contador);
+    }
+    contador.textContent = solicitacoes.length ? String(Math.min(solicitacoes.length, 99)) : '';
+    contador.title = solicitacoes.length ? `${solicitacoes.length} pedido(s) de cadastro aguardando` : '';
+    return solicitacoes.length;
+  }
+
+  async function carregarSolicitacoes() {
+    const cartao = $('solicitacoes-cartao');
+    if (!pode('aprovar_cadastros')) { cartao.hidden = true; return; }
+    await contarSolicitacoes();
+    cartao.hidden = !solicitacoes.length;
+    if (!solicitacoes.length) return;
+    $('solicitacoes-total').textContent = `${solicitacoes.length} aguardando`;
+    $('solicitacoes-tabela').innerHTML = `<table>
+      <thead><tr><th>Pessoa</th><th>ID do Discord</th><th>ID para pagamento</th><th>Mensagem</th><th>Pedido em</th><th></th></tr></thead>
+      <tbody>${solicitacoes.map((s) => `
+        <tr>
+          <td><div class="pedido-pessoa">${s.avatar ? `<img src="${esc(s.avatar)}" alt="" loading="lazy">` : `<span class="avatar-inicial">${esc((s.nome || '?').charAt(0).toUpperCase())}</span>`}<strong>${esc(s.nome)}</strong></div></td>
+          <td><code>${esc(s.discord_id)}</code></td>
+          <td>${s.id_pagamento ? `<code>${esc(s.id_pagamento)}</code>` : '<span class="dica">—</span>'}</td>
+          <td class="pedido-mensagem">${s.mensagem ? esc(s.mensagem) : '<span class="dica">—</span>'}</td>
+          <td>${esc(BD.dataHoraBR(s.criado_em))}</td>
+          <td class="acoes">
+            <button type="button" class="botao-primario botao-pequeno" data-aprovar-pedido="${esc(s.id)}">✅ Aprovar</button>
+            <button type="button" class="botao botao-pequeno" data-recusar-pedido="${esc(s.id)}">Recusar</button>
+          </td>
+        </tr>`).join('')}
+      </tbody></table>`;
+  }
+
+  function aprovarPedido(s) {
+    const perfis = perfisQuePossoDar(null);
+    const sugerido = perfis.find((p) => semAcento(p.nome) === 'vendedor');
+    abrirEdicao(`Aprovar ${s.nome}`, [
+      { nome: 'nome', rotulo: 'Nome (reserva)', valor: s.nome, obrigatorio: true, max: 40, largo: true,
+        dica: 'O site mostra o nome que a pessoa usa no servidor do Discord. Este nome só aparece enquanto o do Discord não for encontrado.' },
+      { nome: 'id_pagamento', rotulo: 'ID para pagamento', valor: s.id_pagamento, max: 40 },
+      { nome: 'perfil_id', rotulo: 'Perfil', tipo: 'select', valor: sugerido ? sugerido.id : '', largo: true,
+        opcoes: [{ valor: '', texto: '— só o perfil padrão e os cargos do Discord —' }, ...perfis.map((p) => ({ valor: p.id, texto: p.nome }))],
+        dica: `ID do Discord: ${s.discord_id}. O perfil define o que a pessoa vê e faz; dá para mudar depois em Editar.` },
+    ], async (val) => {
+      if (val.nome.length < 2) throw new Error('O nome precisa ter pelo menos 2 letras.');
+      const id = falhou(await db.rpc('aprovar_cadastro', {
+        p_id: s.id, p_perfil_id: val.perfil_id || null, p_nome: val.nome, p_id_pagamento: val.id_pagamento || null,
+      }));
+      await carregarVendedores();
+      sincronizarNomes(id, true);
+    });
+  }
+
+  function recusarPedido(s) {
+    abrirEdicao(`Recusar o pedido de ${s.nome}`, [
+      { nome: 'motivo', rotulo: 'Motivo da recusa', tipo: 'textarea', obrigatorio: true, max: 300, largo: true,
+        dica: 'A pessoa vê este motivo ao entrar no site e pode pedir de novo.' },
+    ], async (val) => {
+      if (val.motivo.length < 3) throw new Error('Escreva o motivo da recusa.');
+      falhou(await db.rpc('recusar_cadastro', { p_id: s.id, p_motivo: val.motivo }));
+      await carregarSolicitacoes();
+    });
+  }
+
+  $('solicitacoes-tabela').addEventListener('click', (e) => {
+    const aprovar = e.target.closest('[data-aprovar-pedido]');
+    const recusar = e.target.closest('[data-recusar-pedido]');
+    const id = (aprovar || recusar)?.dataset[aprovar ? 'aprovarPedido' : 'recusarPedido'];
+    const s = id && solicitacoes.find((x) => x.id === id);
+    if (!s) return;
+    if (aprovar) aprovarPedido(s);
+    else recusarPedido(s);
+  });
+
   async function carregarVendedores() {
     const container = $('vendedores-tabela');
-    await Promise.all([carregarListasBase(), carregarCargos()]);
+    await Promise.all([carregarListasBase(), carregarCargos(), carregarSolicitacoes()]);
     if (!cache.vendedores.length) {
       container.innerHTML = '<p class="vazio">Nenhum usuário cadastrado. Clique em "+ Novo usuário".</p>';
       return;

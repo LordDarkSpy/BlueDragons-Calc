@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calculadora de Venda — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=21">
+<link rel="stylesheet" href="css/style.css?v=25">
 </head>
 <body>
 
@@ -114,12 +114,35 @@
     <div id="login-entrar-bloco">
       <p class="modal-texto">Entre com a sua conta do Discord para registrar vendas.</p>
       <button id="entrar-discord" type="button" class="botao-discord botao-bloco">Entrar com Discord</button>
+    <p class="dica dica-conta">Tem mais de uma conta no Discord? Na tela do Discord, toque em <strong>“Não é você?”</strong> para escolher outra. No celular, troque a conta no app do Discord antes de entrar.</p>
     </div>
     <div id="login-nao-cadastrado" hidden>
-      <p class="modal-texto">Sua conta do Discord ainda não está cadastrada. Envie o ID abaixo para a liderança liberar seu acesso.</p>
-      <input id="meu-discord-id" type="text" readonly aria-label="Seu ID do Discord">
-      <button id="copiar-discord-id" type="button" class="botao botao-bloco">📋 Copiar meu ID</button>
-      <button id="tentar-novamente" type="button" class="botao-primario botao-bloco">Já fui cadastrado, tentar de novo</button>
+      <!-- Sem cadastro: pede o acesso -->
+      <form id="form-solicitar" novalidate hidden>
+        <p class="modal-texto">Sua conta do Discord ainda não tem cadastro. Peça o acesso: a liderança aprova e você já pode usar o site.</p>
+        <p id="solicitar-recusado" class="status erro" hidden></p>
+        <label class="rotulo" for="solicitar-nome">Seu nome <span class="obrigatorio">*</span></label>
+        <input id="solicitar-nome" type="text" maxlength="40" autocomplete="off">
+        <label class="rotulo" for="solicitar-pagamento">ID para pagamento <span class="obrigatorio">*</span></label>
+        <input id="solicitar-pagamento" type="text" maxlength="40" autocomplete="off" placeholder="Ex.: 10234">
+        <p class="dica">É o ID em que você recebe as comissões das suas vendas.</p>
+        <label class="rotulo" for="solicitar-mensagem">Mensagem (opcional)</label>
+        <textarea id="solicitar-mensagem" maxlength="300" rows="2" placeholder="Ex.: quem te indicou, seu cargo…"></textarea>
+        <button id="solicitar-enviar" type="submit" class="botao-primario botao-bloco">📨 Solicitar cadastro</button>
+      </form>
+      <!-- Pedido enviado: aguardando -->
+      <div id="solicitar-aguardando" hidden>
+        <div class="sucesso-icone" aria-hidden="true">⏳</div>
+        <p class="modal-texto">Pedido de cadastro enviado<span id="solicitar-quando"></span>. Aguarde a aprovação da liderança: esta tela se atualiza sozinha.</p>
+        <button id="tentar-novamente" type="button" class="botao-primario botao-bloco">Verificar agora</button>
+        <button id="solicitar-editar" type="button" class="botao botao-bloco">✏️ Corrigir meu pedido</button>
+      </div>
+      <!-- Cadastro desativado -->
+      <div id="login-desativado" hidden>
+        <p class="modal-texto">Seu cadastro foi desativado. Fale com a liderança e informe o seu ID do Discord.</p>
+        <input id="meu-discord-id" type="text" readonly aria-label="Seu ID do Discord">
+        <button id="copiar-discord-id" type="button" class="botao botao-bloco">📋 Copiar meu ID</button>
+      </div>
       <button id="sair-nao-cadastrado" type="button" class="botao-secundario botao-bloco">Entrar com outra conta</button>
     </div>
     <p id="modal-vendedor-erro" class="status erro" hidden></p>
@@ -166,7 +189,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=8"></script>
-<script src="js/calculadora.js?v=9"></script>
+<script src="js/comum.js?v=9"></script>
+<script src="js/calculadora.js?v=11"></script>
 </body>
 </html>
