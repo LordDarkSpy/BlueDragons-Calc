@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Painel — Blue Dragons</title>
 <link rel="icon" type="image/png" href="img/logo.png">
-<link rel="stylesheet" href="css/style.css?v=26">
+<link rel="stylesheet" href="css/style.css?v=27">
 </head>
 <body>
 
@@ -56,6 +56,7 @@
       <button type="button" role="tab" data-aba="produtos" aria-selected="false" hidden>📦 Produtos</button>
       <button type="button" role="tab" data-aba="config" aria-selected="false" hidden>🔔 Discord</button>
       <button type="button" role="tab" data-aba="gestao" aria-selected="false" hidden>🛡️ Gestão</button>
+      <button type="button" role="tab" data-aba="logs" aria-selected="false" hidden>🧾 Logs de login</button>
     </nav>
 
     <p id="sem-abas" class="cartao vazio" hidden>O seu perfil acessa o painel, mas nenhuma aba foi liberada. Peça à liderança para ajustar o perfil.</p>
@@ -262,6 +263,18 @@
         <button id="cfg-salvar" type="submit" class="botao-primario botao-bloco">💾 Salvar configurações</button>
       </form>
     </section>
+
+    <section id="aba-logs" class="painel" role="tabpanel" hidden>
+      <div class="cartao">
+        <h2>Logs de login</h2>
+        <p class="dica">Cada volta do Discord para o site: a conta que o Discord devolveu (ID, @usuário e nome de exibição), o cadastro encontrado e o aparelho. Toque em "ver tudo" para abrir o que veio completo. Ficam 30 dias.</p>
+        <div class="barra-ferramentas">
+          <button id="logs-atualizar" type="button" class="botao">🔄 Atualizar</button>
+          <span id="logs-status" class="dica"></span>
+        </div>
+        <div id="logs-tabela" class="tabela-wrap"></div>
+      </div>
+    </section>
   </div>
 </main>
 
@@ -438,7 +451,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="js/config.js?v=2"></script>
-<script src="js/comum.js?v=9"></script>
-<script src="js/admin.js?v=31"></script>
+<script src="js/comum.js?v=10"></script>
+<script src="js/admin.js?v=32"></script>
 </body>
 </html>

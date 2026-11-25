@@ -4,6 +4,13 @@
   const configurado = /^https:\/\/.+\.supabase\.co\/?$/.test(config.supabaseUrl || '')
     && config.supabaseAnonKey && !/^SUA-/.test(config.supabaseAnonKey);
 
+  // Volta do login do Discord: guarda o que veio na URL antes de o Supabase limpá-la (vai para os logs de login).
+  const retornoLogin = (() => {
+    const p = new URLSearchParams(location.hash.slice(1));
+    new URLSearchParams(location.search.slice(1)).forEach((v, k) => { if (!p.has(k)) p.set(k, v); });
+    return p.get('access_token') || p.get('error') || p.get('error_description') ? p : null;
+  })();
+
   const BD = {
     configurado,
     moeda: 'R$ ',
@@ -64,6 +71,52 @@
       const meta = session.user.user_metadata || {};
       data.apelido = meta.full_name || meta.name || meta.custom_claims?.global_name || '';
       return data;
+    },
+
+    // Logs de login: registra o que o Discord devolveu (a API do Discord é consultada com o token do login,
+    // que não é guardado), o aparelho e, no banco, a conta gravada pelo Supabase. Nunca atrapalha o login.
+    async _registrarRetornoLogin(p) {
+      try {
+        const mascarar = (email) => (email ? String(email).replace(/^(.{0,2})[^@]*/, '$1***') : email);
+        const uaData = navigator.userAgentData;
+        const dados = {
+          versao: 1,
+          pagina: location.origin + location.pathname,
+          erro_url: p.get('error') || p.get('error_description')
+            ? { error: p.get('error'), error_code: p.get('error_code'), error_description: p.get('error_description') }
+            : null,
+          retorno: { tem_access_token: !!p.get('access_token'), tem_provider_token: !!p.get('provider_token'),
+                     token_type: p.get('token_type'), expires_in: p.get('expires_in'), parametros: [...p.keys()] },
+          aparelho: {
+            user_agent: navigator.userAgent,
+            plataforma: (uaData && uaData.platform) || navigator.platform,
+            celular: uaData ? uaData.mobile : /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent),
+            idioma: navigator.language,
+            tela: `${screen.width}x${screen.height}`,
+            app_instalado: window.matchMedia('(display-mode: standalone)').matches,
+            veio_de: document.referrer || null,
+          },
+        };
+        const token = p.get('provider_token');
+        if (token) {
+          for (const [chave, url] of [['discord_users_me', 'https://discord.com/api/v10/users/@me'],
+                                      ['discord_oauth2_me', 'https://discord.com/api/v10/oauth2/@me']]) {
+            try {
+              const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+              const corpo = await r.json().catch(() => null);
+              if (corpo && corpo.email) corpo.email = mascarar(corpo.email);
+              if (corpo && corpo.user && corpo.user.email) corpo.user.email = mascarar(corpo.user.email);
+              dados[chave] = { status: r.status, corpo };
+            } catch (e) {
+              dados[chave] = { erro: String((e && e.message) || e) };
+            }
+          }
+        }
+        await BD.db.auth.getSession(); // espera o Supabase gravar a sessão que veio na URL
+        await BD.db.rpc('registrar_login', { p_dados: dados });
+      } catch (e) {
+        console.warn('Log de login não registrado:', e);
+      }
     },
 
     // Mostra a mensagem de erro que o Supabase devolve na URL quando o login falha.
@@ -251,6 +304,7 @@
   };
 
   window.BD = BD;
+  if (retornoLogin && BD.db) BD._registrarRetornoLogin(retornoLogin);
 })();
 
 // Banner do dragão: toca uma vez ao abrir (o dragão chega e pousa) e fica pousado.

@@ -1126,3 +1126,9 @@ a.botao-discord { display: inline-flex; align-items: center; justify-content: ce
 .bloco-codigo { padding-top: 8px; border-top: 1px solid var(--borda); }
 #login-codigo-bloco input { text-transform: uppercase; letter-spacing: 0.12em; font-family: ui-monospace, Consolas, monospace; text-align: center; }
 .link-botao { background: none; border: 0; padding: 6px 0; color: var(--azul-claro); text-decoration: underline; cursor: pointer; font: inherit; width: 100%; }
+
+/* Logs de login (painel) */
+.tabela-logs td { vertical-align: top; }
+.log-detalhes { margin-top: 6px; }
+.log-detalhes summary { cursor: pointer; color: var(--texto-suave); font-size: 0.8rem; }
+.log-detalhes pre { max-width: min(80vw, 640px); max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 0.72rem; background: rgba(0, 0, 0, 0.25); padding: 8px; border-radius: 6px; }

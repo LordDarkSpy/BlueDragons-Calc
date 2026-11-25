@@ -303,6 +303,23 @@ alter table public.acessos_codigo enable row level security;
 alter table public.codigo_tentativas enable row level security;
 revoke all on public.codigos_acesso, public.acessos_codigo, public.codigo_tentativas from anon, authenticated;
 
+-- Logs de login: cada volta do Discord para o site (o que o Discord devolveu, o que o Supabase gravou,
+-- o cadastro encontrado e o aparelho). Serve para investigar login que volta com outra conta. Fica 30 dias.
+create table if not exists public.login_logs (
+  id bigint generated always as identity primary key,
+  criado_em timestamptz not null default now(),
+  user_id uuid,
+  discord_id text,
+  discord_usuario text,
+  discord_nome text,
+  cadastro text,
+  erro text,
+  dados jsonb not null default '{}'::jsonb
+);
+create index if not exists login_logs_criado_idx on public.login_logs (criado_em desc);
+alter table public.login_logs enable row level security;
+revoke all on public.login_logs from anon, authenticated;
+
 -- Novidades mostradas ao entrar no site (preços, produtos e parcerias).
 create table if not exists public.novidades (
   id bigint generated always as identity primary key,
@@ -3419,6 +3436,66 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
+-- Logs de login (diagnóstico)
+-- -----------------------------------------------------------------------------
+
+-- O site chama ao voltar do Discord (com ou sem sessão, para registrar também os erros).
+-- p_dados: o que o navegador viu (erro na URL, resposta da API do Discord, aparelho); o resto vem do banco.
+create or replace function public.registrar_login(p_dados jsonb)
+returns void
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_ident jsonb;
+  v_meta jsonb;
+  v_discord text;
+  v_usuario text;
+  v_nome text;
+  v_cad text;
+begin
+  if p_dados is null or jsonb_typeof(p_dados) <> 'object' or length(p_dados::text) > 30000 then return; end if;
+  -- Limite contra abuso: 30 por hora por usuário (sem sessão, 30 por hora no total).
+  if (select count(*) from public.login_logs
+       where criado_em > now() - interval '1 hour'
+         and user_id is not distinct from v_uid) >= 30 then return; end if;
+  if v_uid is not null then
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'provider', i.provider, 'provider_id', i.provider_id, 'criado_em', i.created_at,
+             'ultimo_login', i.last_sign_in_at, 'identity_data', i.identity_data - 'email')), '[]'::jsonb)
+      into v_ident from auth.identities i where i.user_id = v_uid;
+    select u.raw_user_meta_data - 'email' into v_meta from auth.users u where u.id = v_uid;
+    v_discord := public._discord_id();
+    select i.identity_data->>'name', coalesce(i.identity_data->'custom_claims'->>'global_name', i.identity_data->>'full_name')
+      into v_usuario, v_nome
+      from auth.identities i where i.user_id = v_uid and i.provider = 'discord' limit 1;
+    select coalesce(v.nome_discord, v.nome) || case when v.ativo then '' else ' (desativado)' end
+      into v_cad from public.vendedores v where v.discord_id = v_discord;
+  end if;
+  insert into public.login_logs (user_id, discord_id, discord_usuario, discord_nome, cadastro, erro, dados)
+  values (v_uid, v_discord, v_usuario, v_nome, v_cad,
+          left(coalesce(p_dados->'erro_url'->>'error_description', p_dados->'erro_url'->>'error'), 300),
+          p_dados || jsonb_build_object('supabase_identidades', v_ident, 'supabase_user_metadata', v_meta));
+end;
+$$;
+
+-- Últimos logs de login (só a liderança).
+create or replace function public.logs_login(p_limite int default 100)
+returns jsonb
+language plpgsql stable security definer
+set search_path = public
+as $$
+begin
+  if not public._e_lider() then raise exception 'permission denied'; end if;
+  return coalesce((
+    select jsonb_agg(to_jsonb(l) order by l.criado_em desc)
+    from (select * from public.login_logs order by criado_em desc limit least(greatest(coalesce(p_limite, 100), 1), 500)) l
+  ), '[]'::jsonb);
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
 -- Permissões de execução das funções
 -- -----------------------------------------------------------------------------
 
@@ -3428,6 +3505,8 @@ grant execute on function public.is_admin() to anon, authenticated;
 grant execute on function public._e_lider() to authenticated;
 grant execute on function public.tem_permissao(text) to authenticated;
 grant execute on function public.meu_perfil() to authenticated;
+grant execute on function public.registrar_login(jsonb) to anon, authenticated;
+grant execute on function public.logs_login(int) to authenticated;
 grant execute on function public.registrar_venda(jsonb, uuid, text, text) to authenticated;
 grant execute on function public.minha_semana() to authenticated;
 grant execute on function public.ranking_vendedores(date, date) to authenticated;
@@ -3492,3 +3571,7 @@ select cron.schedule('bluedragons-emojis-produtos', '* * * * *', 'select public.
 -- Novidades com mais de 90 dias saem da lista.
 select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-limpar-novidades';
 select cron.schedule('bluedragons-limpar-novidades', '30 7 * * *', $$delete from public.novidades where criado_em < now() - interval '90 days' or (not publicada and criado_em < now() - interval '1 day')$$);
+
+-- Logs de login com mais de 30 dias saem da lista.
+select cron.unschedule(jobid) from cron.job where jobname = 'bluedragons-limpar-logs-login';
+select cron.schedule('bluedragons-limpar-logs-login', '40 7 * * *', $$delete from public.login_logs where criado_em < now() - interval '30 days'$$);

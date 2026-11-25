@@ -141,9 +141,12 @@
     produtos: carregarProdutos,
     config: carregarConfig,
     gestao: carregarGestao,
+    logs: carregarLogsLogin,
   };
-  // Pode abrir a aba? (Discord e opções gerais: só o DEV, definido no banco)
-  const podeAba = (nome) => (nome === 'config' ? !!meuPerfil.dev : pode(ABA_PERMISSAO[nome]));
+  // Pode abrir a aba? (Discord e opções gerais: só o DEV, definido no banco; logs de login: a liderança)
+  const podeAba = (nome) => (nome === 'config' ? !!meuPerfil.dev
+    : nome === 'logs' ? !!(meuPerfil.lider || meuPerfil.dev)
+    : pode(ABA_PERMISSAO[nome]));
   const abasLiberadas = () => Object.keys(carregadores).filter(podeAba);
 
   function abrirAba(nome) {
@@ -1952,6 +1955,63 @@
     if (e.target === $('modal-servidor') || e.target.closest('[data-fechar-servidor]')) fecharModalServidor();
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal-servidor').hidden) fecharModalServidor(); });
+
+  // ================================================================ logs de login
+
+  // Data de criação da conta do Discord (vem dentro do próprio ID).
+  function criacaoContaDiscord(id) {
+    try {
+      return new Date(Number((BigInt(id) >> 22n) + 1420070400000n)).toLocaleDateString('pt-BR');
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function resumoAparelho(ua) {
+    ua = ua || '';
+    const so = /iPhone|iPad/.test(ua) ? 'iPhone/iPad' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows'
+      : /Mac OS X/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : '?';
+    const nav = /Discord/i.test(ua) ? 'app do Discord' : /Instagram|FBAN|FBAV|WhatsApp/i.test(ua) ? 'navegador de app'
+      : /OPR\//.test(ua) ? 'Opera' : /Edg\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung'
+      : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : '?';
+    return `${so} · ${nav}`;
+  }
+
+  async function carregarLogsLogin() {
+    const status = $('logs-status');
+    status.textContent = '⏳ Carregando…';
+    const { data, error } = await db.rpc('logs_login', { p_limite: 200 });
+    if (error) { status.textContent = ''; return erroNaTabela($('logs-tabela'), error); }
+    status.textContent = `${data.length} registro${data.length === 1 ? '' : 's'}`;
+    if (!data.length) {
+      $('logs-tabela').innerHTML = '<p class="vazio">Nenhum login registrado ainda.</p>';
+      return;
+    }
+    $('logs-tabela').innerHTML = `<table class="tabela-logs">
+      <thead><tr><th>Quando</th><th>Aparelho</th><th>Conta que o Discord devolveu</th><th>Cadastro</th><th>Resultado</th></tr></thead>
+      <tbody>${data.map((l) => {
+        const d = l.dados || {};
+        const api = d.discord_users_me && d.discord_users_me.corpo;
+        // A API do Discord confirma a conta? (mesmo ID que o Supabase gravou)
+        const confere = api && api.id ? (api.id === l.discord_id ? '✅ API do Discord confere' : `⚠️ API do Discord: ${esc(api.id)}`) : '';
+        const conta = l.discord_id
+          ? `<strong>${esc(l.discord_nome || '')}</strong> <span class="dica">@${esc((l.discord_usuario || '').replace(/#0$/, ''))}</span><br>
+             <span class="dica">ID ${esc(l.discord_id)} · conta criada em ${criacaoContaDiscord(l.discord_id)}</span>${confere ? `<br><span class="dica">${confere}</span>` : ''}`
+          : '<span class="dica">—</span>';
+        const resultado = l.erro ? `<span class="etiqueta inativo">Erro</span> ${esc(l.erro)}`
+          : !l.user_id ? '<span class="etiqueta inativo">Sem sessão</span>'
+          : l.cadastro ? '<span class="etiqueta ativo">Entrou</span>' : '<span class="etiqueta inativo">Sem cadastro</span>';
+        return `<tr>
+          <td>${dataHoraBR(l.criado_em)}</td>
+          <td>${esc(resumoAparelho(d.aparelho && d.aparelho.user_agent))}</td>
+          <td>${conta}</td>
+          <td>${l.cadastro ? esc(l.cadastro) : '<span class="dica">nenhum</span>'}</td>
+          <td>${resultado}
+            <details class="log-detalhes"><summary>ver tudo</summary><pre>${esc(JSON.stringify(d, null, 2))}</pre></details></td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  }
+  $('logs-atualizar').addEventListener('click', carregarLogsLogin);
 
   // ================================================================ início
 
